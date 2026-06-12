@@ -43,6 +43,17 @@ export async function resolveAuthorizedUser(
   return null;
 }
 
+export async function getAllUsers(env: Env): Promise<User[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT telegram_id, first_name, is_admin FROM users",
+  ).all<UserRow>();
+  return results.map((row) => ({
+    telegramId: row.telegram_id,
+    firstName: row.first_name,
+    isAdmin: row.is_admin === 1 || String(row.telegram_id) === env.ADMIN_ID,
+  }));
+}
+
 export async function addUser(
   env: Env,
   telegramId: number,

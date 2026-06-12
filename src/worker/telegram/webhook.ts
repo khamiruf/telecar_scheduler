@@ -156,10 +156,7 @@ async function handleLocationText(
   }
   await setCarLocation(env, level, userId);
   await sendMessage(env, message.chat.id, `\u{1F4CD} Got it — car is at <b>${escapeHtml(level)}</b>`);
-  // Skip the group echo when the update came from the group itself.
-  if (String(message.chat.id) !== env.GROUP_CHAT_ID) {
-    await notifyLocation(env, level, userName);
-  }
+  await notifyLocation(env, level, userName, userId);
 }
 
 async function transcribe(env: Env, fileId: string): Promise<string> {

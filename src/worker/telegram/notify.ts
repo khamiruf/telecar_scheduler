@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import type { Booking, CarStatus } from "@/shared/types";
 import { sendMessage, escapeHtml } from "./api";
+import { getAllUsers } from "../core/users";
 
 const TIME_ZONE = "Asia/Singapore"; // family's home timezone, used for bot messages
 
@@ -47,37 +48,34 @@ export function statusLine(status: CarStatus | null, next: Booking | null): stri
   return `${location}\n${usage}`;
 }
 
-async function toGroup(env: Env, html: string): Promise<void> {
-  if (!env.GROUP_CHAT_ID || env.GROUP_CHAT_ID.startsWith("REPLACE")) return;
+async function notify(env: Env, chatId: string | number, html: string): Promise<void> {
   try {
-    await sendMessage(env, env.GROUP_CHAT_ID, html);
+    await sendMessage(env, String(chatId), html);
   } catch (err) {
-    // A broken group notification must never fail the action that triggered it.
-    console.error("group notification failed", err);
+    console.error("notification failed", err);
   }
 }
 
-export async function notifyLocation(env: Env, level: string, byName: string): Promise<void> {
-  await toGroup(env, `\u{1F4CD} <b>${escapeHtml(byName)}</b> parked at <b>${escapeHtml(level)}</b>`);
+async function notifyOthers(env: Env, actorId: number, html: string): Promise<void> {
+  const users = await getAllUsers(env);
+  const others = users.filter((u) => u.telegramId !== actorId);
+  await Promise.all(others.map((u) => notify(env, u.telegramId, html)));
+}
+
+export async function notifyLocation(env: Env, level: string, byName: string, actorId: number): Promise<void> {
+  await notifyOthers(env, actorId, `\u{1F4CD} <b>${escapeHtml(byName)}</b> parked at <b>${escapeHtml(level)}</b>`);
 }
 
 export async function notifyBooked(env: Env, booking: Booking): Promise<void> {
-  await toGroup(
-    env,
-    `\u{1F4C5} <b>${escapeHtml(booking.userName)}</b> booked the car · ${formatRange(booking)}`,
-  );
+  await notify(env, booking.userId, `\u{1F4C5} Booked · ${formatRange(booking)}`);
+  await notifyOthers(env, booking.userId, `\u{1F4C5} <b>${escapeHtml(booking.userName)}</b> booked the car · ${formatRange(booking)}`);
 }
 
 export async function notifyCancelled(env: Env, booking: Booking): Promise<void> {
-  await toGroup(
-    env,
-    `❌ <b>${escapeHtml(booking.userName)}</b> cancelled · ${formatRange(booking)}`,
-  );
+  await notify(env, booking.userId, `❌ Cancelled · ${formatRange(booking)}`);
+  await notifyOthers(env, booking.userId, `❌ <b>${escapeHtml(booking.userName)}</b> cancelled · ${formatRange(booking)}`);
 }
 
 export async function notifyReminder(env: Env, booking: Booking): Promise<void> {
-  await toGroup(
-    env,
-    `⏰ <b>${escapeHtml(booking.userName)}</b>'s booking starts at ${formatTime(booking.startsAt)}`,
-  );
+  await notify(env, booking.userId, `⏰ Your booking starts at ${formatTime(booking.startsAt)}`);
 }

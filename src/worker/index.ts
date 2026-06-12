@@ -82,7 +82,7 @@ api.put("/status", async (c) => {
   if (!cleaned || cleaned.length > 10) return c.json({ error: "invalid_level" }, 400);
   const user = c.get("user");
   await setCarLocation(c.env, cleaned, user.telegramId);
-  c.executionCtx.waitUntil(notifyLocation(c.env, cleaned, user.firstName));
+  c.executionCtx.waitUntil(notifyLocation(c.env, cleaned, user.firstName, user.telegramId));
   return c.json(await getCarStatus(c.env));
 });
 

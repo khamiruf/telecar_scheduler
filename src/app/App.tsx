@@ -6,7 +6,7 @@ import StatusCard from "./components/StatusCard";
 import Schedule from "./components/Schedule";
 import AccessDenied from "./components/AccessDenied";
 
-const DAYS_VISIBLE = 7;
+const DAYS_VISIBLE = 21;
 
 type Gate = "loading" | "denied" | "ready";
 

@@ -1,33 +1,37 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "telecar",
-  "main": "src/worker/index.ts",
-  "compatibility_date": "2025-05-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "not_found_handling": "single-page-application"
-  },
-  "ai": {
-    "binding": "AI"
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "telecar",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "triggers": {
-    "crons": ["*/5 * * * *"]
-  },
-  "vars": {
-    // Telegram user id of the owner/admin. Always authorized; can add others via /add.
-    "ADMIN_ID": "REPLACE_WITH_YOUR_TELEGRAM_ID",
-    // Chat id of the family group where notifications are posted.
-    "GROUP_CHAT_ID": "REPLACE_WITH_GROUP_CHAT_ID"
-  }
-  // Secrets (set via `wrangler secret put <NAME>`, or .dev.vars locally):
-  //   TELEGRAM_BOT_TOKEN     - from @BotFather
-  //   TELEGRAM_WEBHOOK_SECRET - random string, must match setWebhook secret_token
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "telecar",
+	"main": "src/worker/index.ts",
+	"compatibility_date": "2025-05-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"not_found_handling": "single-page-application"
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "telecar",
+			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"migrations_dir": "migrations"
+		}
+	],
+	"triggers": {
+		"crons": [
+			"*/5 * * * *"
+		]
+	},
+	"vars": {
+		// Telegram user id of the owner/admin. Always authorized; can add others via /add.
+		"ADMIN_ID": "REPLACE_WITH_YOUR_TELEGRAM_ID",
+		// Chat id of the family group where notifications are posted.
+		"GROUP_CHAT_ID": "REPLACE_WITH_GROUP_CHAT_ID"
+	}
+	// Secrets (set via `wrangler secret put <NAME>`, or .dev.vars locally):
+	//   TELEGRAM_BOT_TOKEN     - from @BotFather
+	//   TELEGRAM_WEBHOOK_SECRET - random string, must match setWebhook secret_token
 }
