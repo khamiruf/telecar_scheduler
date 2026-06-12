@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+:root {
+  /* Telegram theme with sane fallbacks for dev in a plain browser */
+  --bg: var(--tg-theme-bg-color, #17181c);
+  --bg-2: var(--tg-theme-secondary-bg-color, #1f2127);
+  --text: var(--tg-theme-text-color, #f2f3f5);
+  --hint: var(--tg-theme-hint-color, #8a8f98);
+  --link: var(--tg-theme-link-color, #6ab2f2);
+  --button: var(--tg-theme-button-color, #5288c1);
+  --button-text: var(--tg-theme-button-text-color, #ffffff);
+  --destructive: var(--tg-theme-destructive-text-color, #ec5b5b);
+  /* signature: parking-paint safety yellow */
+  --paint: #f2c41d;
+  --paint-ink: #16140a;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg2: var(--bg-2);
+  --color-ink: var(--text);
+  --color-hint: var(--hint);
+  --color-link: var(--link);
+  --color-button: var(--button);
+  --color-button-text: var(--button-text);
+  --color-destructive: var(--destructive);
+  --color-paint: var(--paint);
+  --color-paint-ink: var(--paint-ink);
+  --font-sign: "Overpass", "Helvetica Neue", sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Overpass", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* painted hazard stripe — the app's signature divider */
+.hazard {
+  height: 5px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--paint) 0 10px,
+    transparent 10px 22px
+  );
+  opacity: 0.85;
+}
+
+/* staggered page-load reveal */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* level numeral swap */
+@keyframes stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.98);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.stamp {
+  animation: stamp 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.pulse-soft {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+
+button {
+  touch-action: manipulation;
+}
+.pressable {
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.pressable:active {
+  transform: scale(0.97);
+}
+
+::selection {
+  background: var(--paint);
+  color: var(--paint-ink);
+}

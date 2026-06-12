@@ -1,0 +1,5 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+TELEGRAM_BOT_TOKEN=123456:ABC-your-bot-token
+TELEGRAM_WEBHOOK_SECRET=any-long-random-string
+# Act as this user when developing outside Telegram (never set in production)
+DEV_USER_ID=12345678
