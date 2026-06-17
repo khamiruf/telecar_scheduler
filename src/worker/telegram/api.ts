@@ -21,9 +21,17 @@ export interface TgMessage {
   voice?: TgVoice;
 }
 
+export interface TgCallbackQuery {
+  id: string;
+  from: TgUser;
+  message?: TgMessage;
+  data?: string;
+}
+
 export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
+  callback_query?: TgCallbackQuery;
 }
 
 async function callApi<T>(env: Env, method: string, payload: unknown): Promise<T> {
@@ -55,6 +63,10 @@ export async function sendMessage(
     parse_mode: "HTML",
     reply_markup: options.replyMarkup,
   });
+}
+
+export async function answerCallbackQuery(env: Env, callbackQueryId: string, text?: string): Promise<void> {
+  await callApi(env, "answerCallbackQuery", { callback_query_id: callbackQueryId, text });
 }
 
 /** Downloads a file (e.g. a voice note) from Telegram's file storage. */
