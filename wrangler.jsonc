@@ -19,7 +19,7 @@
     }
   ],
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["*/15 * * * *"]
   },
   "vars": {
     // Chat id of the family group where notifications are posted.

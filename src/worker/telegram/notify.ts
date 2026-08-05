@@ -16,7 +16,15 @@ export function formatTime(unixSeconds: number): string {
 }
 
 export function formatRange(booking: Booking): string {
-  const start = formatTime(booking.startsAt);
+  const start = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIME_ZONE,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(booking.startsAt * 1000));
   const endTime = new Intl.DateTimeFormat("en-GB", {
     timeZone: TIME_ZONE,
     hour: "2-digit",
