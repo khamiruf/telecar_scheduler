@@ -5,6 +5,8 @@ A shared family car, organised through Telegram. One bot, one Mini App, one Clou
 - **Where's the car?** Send the bot a voice note ("parked at level 4B") or just type `4B`.
 - **Who has it?** `/where` answers in the chat; every change is announced in the family group.
 - **Booking it** happens in the Mini App — a one-screen schedule with tap-to-book hours.
+  You can also text the bot: "book saturday 2pm to 6pm", or "cancel my booking"
+  (no date → your soonest upcoming booking; "cancel wednesday" → that day, Singapore time).
 
 Everything runs on a single Cloudflare Worker (free tier): Hono API, D1 database, Workers AI
 Whisper for voice transcription, static assets for the React Mini App.

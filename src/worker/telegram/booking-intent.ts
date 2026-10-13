@@ -11,6 +11,35 @@ export function looksLikeBooking(text: string): boolean {
   return BOOKING_RE.test(text);
 }
 
+const CANCEL_RE = /\b(cancel|unbook|delete|remove)\b/i;
+
+export function looksLikeCancel(text: string): boolean {
+  return CANCEL_RE.test(text);
+}
+
+// Anything that names a day: relative words, weekdays, month names, or digits (dates/times).
+const DATE_HINT_RE = new RegExp(
+  "\\b(today|tonight|tomorrow|tmr|tmrw|morning|afternoon|evening|weekend|" +
+    "mon(day)?|tue(s|sday)?|wed(nesday)?|thu(r|rs|rsday)?|fri(day)?|sat(urday)?|sun(day)?|" +
+    "jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?)\\b|\\d",
+  "i",
+);
+
+export function mentionsDate(text: string): boolean {
+  return DATE_HINT_RE.test(text);
+}
+
+/**
+ * Splits "Cancel my Wednesday booking. Book tonight instead" into separate requests.
+ * Only splits on sentence punctuation followed by whitespace, so "2.30pm" stays intact.
+ */
+export function splitRequests(text: string): string[] {
+  return text
+    .split(/(?<=[.!?;])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // Returns unix timestamp for a given time on a given SGT calendar date.
 function sgUnix(year: number, month: number, day: number, hour: number, minute = 0): number {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -64,7 +93,7 @@ export async function parseBookingIntent(env: Env, text: string): Promise<Bookin
   const dayList = entries.map((e, i) => `${i}:${e.label}`).join(" ");
 
   const systemPrompt =
-    `You extract the day and time of a car booking request. Today is ${entries[0].label} (Asia/Singapore). ` +
+    `You extract the day and time of a car booking (or booking cancellation) request. Today is ${entries[0].label} (Asia/Singapore). ` +
     `Numbered days: ${dayList} ` +
     `Reply with ONLY raw JSON, no markdown, no explanation: ` +
     `{"startDay":<index>,"endDay":<index>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>} ` +

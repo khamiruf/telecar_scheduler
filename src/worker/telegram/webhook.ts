@@ -1,11 +1,12 @@
 import type { Env } from "../env";
 import { getCarStatus, setCarLocation } from "../core/car";
-import { createBooking, currentOrNextBooking } from "../core/bookings";
+import { cancelBooking, createBooking, currentOrNextBooking, upcomingBookingsForUser } from "../core/bookings";
 import { addUser, resolveAuthorizedUser } from "../core/users";
 import { answerCallbackQuery, downloadFile, escapeHtml, sendMessage, type TgCallbackQuery, type TgMessage, type TgUpdate } from "./api";
-import { notifyBooked, notifyLocation, statusLine } from "./notify";
+import { formatRange, notifyBooked, notifyCancelled, notifyLocation, statusLine } from "./notify";
 import { parseLevel } from "./parse";
-import { looksLikeBooking, parseBookingIntent } from "./booking-intent";
+import { looksLikeBooking, looksLikeCancel, mentionsDate, parseBookingIntent, splitRequests } from "./booking-intent";
+import type { Booking } from "@/shared/types";
 
 /** Entry point for POST /telegram/webhook. Telegram retries on non-2xx, so we always 200. */
 export async function handleUpdate(env: Env, update: TgUpdate, appUrl: string): Promise<void> {
@@ -128,10 +129,10 @@ async function handleMessage(env: Env, message: TgMessage, appUrl: string): Prom
     return;
   }
 
-  // Plain text: check booking intent first (private chat only), then try location parse.
+  // Plain text: check cancel/booking intent first (private chat only), then try location parse.
   if (text && !command) {
-    if (isPrivate && looksLikeBooking(text)) {
-      await handleBookingIntent(env, message, text);
+    if (isPrivate && (looksLikeCancel(text) || looksLikeBooking(text))) {
+      await handleBookingRequests(env, message, user.telegramId, text);
       return;
     }
     await handleLocationText(env, message, user.firstName, user.telegramId, text, isPrivate);
@@ -166,6 +167,88 @@ async function handleLocationText(
   await setCarLocation(env, level, userId);
   await sendMessage(env, message.chat.id, `\u{1F4CD} Got it — car is at <b>${escapeHtml(level)}</b>`);
   await notifyLocation(env, level, userName, userId);
+}
+
+/**
+ * "Cancel my Wednesday booking. Book tonight instead" carries two requests; handle each
+ * sentence on its own. Otherwise the whole text is one request, so "Book the car. Tomorrow 2pm"
+ * still reaches the parser intact.
+ */
+async function handleBookingRequests(env: Env, message: TgMessage, userId: number, text: string): Promise<void> {
+  const parts = splitRequests(text);
+  const hasCancelPart = parts.some(looksLikeCancel);
+  const hasBookPart = parts.some((p) => !looksLikeCancel(p) && looksLikeBooking(p));
+  if (hasCancelPart && hasBookPart) {
+    for (const part of parts) {
+      if (looksLikeCancel(part)) await handleCancelIntent(env, message, userId, part);
+      else if (looksLikeBooking(part)) await handleBookingIntent(env, message, part);
+    }
+    return;
+  }
+  if (looksLikeCancel(text)) await handleCancelIntent(env, message, userId, text);
+  else await handleBookingIntent(env, message, text);
+}
+
+const MAX_CANCEL_CHOICES = 8;
+
+function cancelChoices(bookings: Booking[]) {
+  return {
+    inline_keyboard: [
+      ...bookings
+        .slice(0, MAX_CANCEL_CHOICES)
+        .map((b) => [{ text: `❌ ${formatRange(b)}`, callback_data: `unbook:${b.id}` }]),
+      [{ text: "Keep my bookings", callback_data: "unbook_keep" }],
+    ],
+  };
+}
+
+/** Cancels one of the user's own bookings. No date given → the soonest upcoming one. */
+async function handleCancelIntent(env: Env, message: TgMessage, userId: number, text: string): Promise<void> {
+  const mine = await upcomingBookingsForUser(env, userId, Math.floor(Date.now() / 1000));
+  if (mine.length === 0) {
+    await sendMessage(env, message.chat.id, "You don't have any upcoming bookings to cancel.");
+    return;
+  }
+
+  let matches: Booking[];
+  if (!mentionsDate(text)) {
+    matches = [mine[0]];
+  } else {
+    // The booking parser resolves the date in Singapore time; cancel whatever of ours overlaps it.
+    const range = await parseBookingIntent(env, text);
+    if (!range) {
+      await sendMessage(env, message.chat.id, "Couldn't work out which day you meant. Which booking should I cancel?", {
+        replyMarkup: cancelChoices(mine),
+      });
+      return;
+    }
+    matches = mine.filter((b) => b.startsAt < range.endsAt && b.endsAt > range.startsAt);
+    if (matches.length === 0) {
+      await sendMessage(env, message.chat.id, "You don't have a booking then. Your upcoming bookings:", {
+        replyMarkup: cancelChoices(mine),
+      });
+      return;
+    }
+  }
+
+  if (matches.length > 1) {
+    await sendMessage(env, message.chat.id, "Which booking should I cancel?", {
+      replyMarkup: cancelChoices(matches),
+    });
+    return;
+  }
+
+  const booking = matches[0];
+  await sendMessage(env, message.chat.id, `\u{1F5D1} Cancel this booking?\n<b>${formatRange(booking)}</b>`, {
+    replyMarkup: {
+      inline_keyboard: [
+        [
+          { text: "✅ Yes, cancel it", callback_data: `unbook:${booking.id}` },
+          { text: "Keep it", callback_data: "unbook_keep" },
+        ],
+      ],
+    },
+  });
 }
 
 async function handleBookingIntent(env: Env, message: TgMessage, text: string): Promise<void> {
@@ -227,8 +310,32 @@ async function handleCallbackQuery(env: Env, cb: TgCallbackQuery): Promise<void>
   }
 
   if (cb.data === "book_cancel") {
-    await answerCallbackQuery(env, cb.id, "Cancelled.");
-    await sendMessage(env, chatId, "Booking cancelled.");
+    await answerCallbackQuery(env, cb.id, "Not booked.");
+    await sendMessage(env, chatId, "Okay, not booked.");
+    return;
+  }
+
+  if (cb.data === "unbook_keep") {
+    await answerCallbackQuery(env, cb.id, "Kept.");
+    await sendMessage(env, chatId, "Okay, booking kept.");
+    return;
+  }
+
+  const unbook = cb.data?.match(/^unbook:(\d+)$/);
+  if (unbook) {
+    const user = await resolveAuthorizedUser(env, cb.from.id, cb.from.first_name);
+    if (!user) {
+      await answerCallbackQuery(env, cb.id, "Not authorised.");
+      return;
+    }
+    const cancelled = await cancelBooking(env, Number(unbook[1]), user.telegramId);
+    if (!cancelled) {
+      await answerCallbackQuery(env, cb.id);
+      await sendMessage(env, chatId, "Couldn't find that booking — it may already be cancelled.");
+      return;
+    }
+    await answerCallbackQuery(env, cb.id, "Cancelled!");
+    await notifyCancelled(env, cancelled);
     return;
   }
 

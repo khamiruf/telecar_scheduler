@@ -118,3 +118,15 @@ export async function markReminded(env: Env, bookingIds: number[]): Promise<void
     .bind(...bookingIds)
     .run();
 }
+
+/** The user's own bookings that haven't ended yet (includes one in progress), soonest first. */
+export async function upcomingBookingsForUser(env: Env, userId: number, now: number): Promise<Booking[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT b.id, b.user_id, b.starts_at, b.ends_at, u.first_name FROM bookings b " +
+      "LEFT JOIN users u ON u.telegram_id = b.user_id " +
+      "WHERE b.user_id = ?1 AND b.ends_at > ?2 ORDER BY b.starts_at",
+  )
+    .bind(userId, now)
+    .all<BookingRow>();
+  return results.map(toBooking);
+}
