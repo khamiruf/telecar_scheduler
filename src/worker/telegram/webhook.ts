@@ -5,7 +5,7 @@ import { addUser, resolveAuthorizedUser } from "../core/users";
 import { answerCallbackQuery, downloadFile, escapeHtml, sendMessage, type TgCallbackQuery, type TgMessage, type TgUpdate } from "./api";
 import { formatRange, notifyBooked, notifyCancelled, notifyLocation, statusLine } from "./notify";
 import { parseLevel } from "./parse";
-import { looksLikeBooking, looksLikeCancel, mentionsDate, parseBookingIntent, splitRequests } from "./booking-intent";
+import { looksLikeBooking, looksLikeCancel, parseCarRequests, type TimeRange } from "./booking-intent";
 import type { Booking } from "@/shared/types";
 
 /** Entry point for POST /telegram/webhook. Telegram retries on non-2xx, so we always 200. */
@@ -170,23 +170,21 @@ async function handleLocationText(
 }
 
 /**
- * "Cancel my Wednesday booking. Book tonight instead" carries two requests; handle each
- * sentence on its own. Otherwise the whole text is one request, so "Book the car. Tomorrow 2pm"
- * still reaches the parser intact.
+ * The keyword check in handleMessage only decides whether to ask the model at all;
+ * the model then says what the message wants, which can be several things
+ * ("Cancel my Wednesday booking, book tonight instead").
  */
 async function handleBookingRequests(env: Env, message: TgMessage, userId: number, text: string): Promise<void> {
-  const parts = splitRequests(text);
-  const hasCancelPart = parts.some(looksLikeCancel);
-  const hasBookPart = parts.some((p) => !looksLikeCancel(p) && looksLikeBooking(p));
-  if (hasCancelPart && hasBookPart) {
-    for (const part of parts) {
-      if (looksLikeCancel(part)) await handleCancelIntent(env, message, userId, part);
-      else if (looksLikeBooking(part)) await handleBookingIntent(env, message, part);
-    }
+  const requests = await parseCarRequests(env, text);
+  if (!requests) {
+    if (looksLikeCancel(text)) await handleCancelIntent(env, message, userId, "unclear");
+    else await handleBookingIntent(env, message, null);
     return;
   }
-  if (looksLikeCancel(text)) await handleCancelIntent(env, message, userId, text);
-  else await handleBookingIntent(env, message, text);
+  for (const request of requests) {
+    if (request.type === "cancel") await handleCancelIntent(env, message, userId, request.when);
+    else await handleBookingIntent(env, message, request.range);
+  }
 }
 
 const MAX_CANCEL_CHOICES = 8;
@@ -203,7 +201,12 @@ function cancelChoices(bookings: Booking[]) {
 }
 
 /** Cancels one of the user's own bookings. No date given → the soonest upcoming one. */
-async function handleCancelIntent(env: Env, message: TgMessage, userId: number, text: string): Promise<void> {
+async function handleCancelIntent(
+  env: Env,
+  message: TgMessage,
+  userId: number,
+  when: TimeRange | "soonest" | "unclear",
+): Promise<void> {
   const mine = await upcomingBookingsForUser(env, userId, Math.floor(Date.now() / 1000));
   if (mine.length === 0) {
     await sendMessage(env, message.chat.id, "You don't have any upcoming bookings to cancel.");
@@ -211,18 +214,16 @@ async function handleCancelIntent(env: Env, message: TgMessage, userId: number, 
   }
 
   let matches: Booking[];
-  if (!mentionsDate(text)) {
+  if (when === "soonest") {
     matches = [mine[0]];
+  } else if (when === "unclear") {
+    await sendMessage(env, message.chat.id, "Couldn't work out which day you meant. Which booking should I cancel?", {
+      replyMarkup: cancelChoices(mine),
+    });
+    return;
   } else {
-    // The booking parser resolves the date in Singapore time; cancel whatever of ours overlaps it.
-    const range = await parseBookingIntent(env, text);
-    if (!range) {
-      await sendMessage(env, message.chat.id, "Couldn't work out which day you meant. Which booking should I cancel?", {
-        replyMarkup: cancelChoices(mine),
-      });
-      return;
-    }
-    matches = mine.filter((b) => b.startsAt < range.endsAt && b.endsAt > range.startsAt);
+    // The range is resolved in Singapore time; cancel whatever of ours overlaps it.
+    matches = mine.filter((b) => b.startsAt < when.endsAt && b.endsAt > when.startsAt);
     if (matches.length === 0) {
       await sendMessage(env, message.chat.id, "You don't have a booking then. Your upcoming bookings:", {
         replyMarkup: cancelChoices(mine),
@@ -251,8 +252,7 @@ async function handleCancelIntent(env: Env, message: TgMessage, userId: number, 
   });
 }
 
-async function handleBookingIntent(env: Env, message: TgMessage, text: string): Promise<void> {
-  const intent = await parseBookingIntent(env, text);
+async function handleBookingIntent(env: Env, message: TgMessage, intent: TimeRange | null): Promise<void> {
   if (!intent) {
     await sendMessage(
       env,
