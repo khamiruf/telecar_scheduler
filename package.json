@@ -10,7 +10,8 @@
     "check": "tsc -b",
     "deploy": "npm run build && wrangler deploy --config dist/telecar/wrangler.json",
     "db:migrate": "wrangler d1 migrations apply telecar --remote",
-    "db:migrate:local": "wrangler d1 migrations apply telecar --local"
+    "db:migrate:local": "wrangler d1 migrations apply telecar --local",
+    "test": "vitest run"
   },
   "dependencies": {
     "@twa-dev/sdk": "^8.0.2",
@@ -30,6 +31,7 @@
     "tailwindcss": "^4.1.0",
     "typescript": "~5.9.3",
     "vite": "^7.1.0",
+    "vitest": "^3.2.7",
     "wrangler": "^4.0.0"
   }
 }
