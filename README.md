@@ -112,3 +112,16 @@ Outside Telegram there's no initData, so the Worker authenticates you as `DEV_US
 since Workers AI has no local simulator.
 
 `npm run check` typechecks app, worker, and config.
+`npm test` runs the worker tests (Node 22.5+).
+
+## CI and automatic deploys
+
+`.github/workflows/ci.yml` runs the typecheck and tests on every PR and on `main`.
+
+Deploys are done by Cloudflare Workers Builds (Worker → Settings → Build, connected to this
+repo): every push to `main` runs `npm run build` then `npx wrangler deploy`. The Vite plugin
+writes `.wrangler/deploy/config.json`, so plain `wrangler deploy` picks up the built config.
+Worker secrets set with `wrangler secret put` are not touched by deploys.
+
+Database migrations are not applied automatically; run `npm run db:migrate` by hand when
+`migrations/` changes.
