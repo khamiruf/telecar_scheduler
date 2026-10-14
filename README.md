@@ -116,14 +116,12 @@ since Workers AI has no local simulator.
 
 ## CI and automatic deploys
 
-`.github/workflows/ci.yml` runs the typecheck and tests on every PR. When something merges
-to `main` and those pass, it runs `npm run deploy`, so the bot picks up the change.
+`.github/workflows/ci.yml` runs the typecheck and tests on every PR and on `main`.
 
-One-time setup, in GitHub → repo **Settings → Secrets and variables → Actions**:
-
-- `CLOUDFLARE_API_TOKEN`: create one at dash.cloudflare.com → My Profile → API Tokens,
-  using the **Edit Cloudflare Workers** template.
-- `CLOUDFLARE_ACCOUNT_ID`: shown on the Workers & Pages overview page.
+Deploys are done by Cloudflare Workers Builds (Worker → Settings → Build, connected to this
+repo): every push to `main` runs `npm run build` then `npx wrangler deploy`. The Vite plugin
+writes `.wrangler/deploy/config.json`, so plain `wrangler deploy` picks up the built config.
+Worker secrets set with `wrangler secret put` are not touched by deploys.
 
 Database migrations are not applied automatically; run `npm run db:migrate` by hand when
 `migrations/` changes.
