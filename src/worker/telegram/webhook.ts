@@ -267,7 +267,8 @@ async function handleBookingIntent(env: Env, message: TgMessage, intent: TimeRan
         `· "book this friday afternoon" (12:00–18:00)\n` +
         `· "book tonight" (18:00–23:00)\n\n` +
         `<b>Specific hours</b>\n` +
-        `· "book saturday 2pm to 6pm"\n\n` +
+        `· "book saturday 2pm to 6pm"\n` +
+        `· "book tonight 7pm" (until 23:00)\n\n` +
         `<b>Relative days</b>\n` +
         `· today / tomorrow / this &lt;weekday&gt; / next &lt;weekday&gt;`,
     );
