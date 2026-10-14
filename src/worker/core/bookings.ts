@@ -80,9 +80,11 @@ export async function cancelBooking(
     .bind(bookingId, userId)
     .first<BookingRow>();
   if (!row) return null;
-  await env.DB.prepare("DELETE FROM bookings WHERE id = ?1 AND user_id = ?2")
+  const result = await env.DB.prepare("DELETE FROM bookings WHERE id = ?1 AND user_id = ?2")
     .bind(bookingId, userId)
     .run();
+  // A concurrent cancel (e.g. a double-tapped button) may have deleted it after our SELECT.
+  if (result.meta.changes === 0) return null;
   return toBooking(row);
 }
 

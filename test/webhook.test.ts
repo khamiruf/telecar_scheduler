@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { handleUpdate } from "@/worker/telegram/webhook";
+import { cancelBooking } from "@/worker/core/bookings";
 import type { Env } from "@/worker/env";
 import { action, captureTelegram, fakeAI, fakeD1, makeEnv, sg, type SentCall } from "./helpers";
 
@@ -184,5 +185,21 @@ describe("cancelling bookings by text", () => {
     await sendText(env, "4B");
     expect(ai.run).not.toHaveBeenCalled();
     expect(messages()[0].body.text).toContain("car is at <b>4B</b>");
+  });
+});
+
+describe("cancelBooking", () => {
+  it("reports a double-tapped cancel only once", async () => {
+    const { db, d1 } = fakeD1();
+    db.exec(`INSERT INTO users (telegram_id, first_name) VALUES (${FATIM.id}, 'Fatim')`);
+    const env = makeEnv(d1, fakeAI());
+    const id = Number(
+      db.prepare("INSERT INTO bookings (user_id, starts_at, ends_at) VALUES (?, ?, ?)").run(FATIM.id, 1, 2).lastInsertRowid,
+    );
+
+    // Both calls read the row before either deletes it, as two concurrent webhook deliveries can.
+    const results = await Promise.all([cancelBooking(env, id, FATIM.id), cancelBooking(env, id, FATIM.id)]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
   });
 });
