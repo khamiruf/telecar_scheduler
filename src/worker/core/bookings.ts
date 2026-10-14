@@ -80,9 +80,11 @@ export async function cancelBooking(
     .bind(bookingId, userId)
     .first<BookingRow>();
   if (!row) return null;
-  await env.DB.prepare("DELETE FROM bookings WHERE id = ?1 AND user_id = ?2")
+  const result = await env.DB.prepare("DELETE FROM bookings WHERE id = ?1 AND user_id = ?2")
     .bind(bookingId, userId)
     .run();
+  // A concurrent cancel (e.g. a double-tapped button) may have deleted it after our SELECT.
+  if (result.meta.changes === 0) return null;
   return toBooking(row);
 }
 
@@ -117,4 +119,16 @@ export async function markReminded(env: Env, bookingIds: number[]): Promise<void
   await env.DB.prepare(`UPDATE bookings SET reminder_sent = 1 WHERE id IN (${placeholders})`)
     .bind(...bookingIds)
     .run();
+}
+
+/** The user's own bookings that haven't ended yet (includes one in progress), soonest first. */
+export async function upcomingBookingsForUser(env: Env, userId: number, now: number): Promise<Booking[]> {
+  const { results } = await env.DB.prepare(
+    "SELECT b.id, b.user_id, b.starts_at, b.ends_at, u.first_name FROM bookings b " +
+      "LEFT JOIN users u ON u.telegram_id = b.user_id " +
+      "WHERE b.user_id = ?1 AND b.ends_at > ?2 ORDER BY b.starts_at",
+  )
+    .bind(userId, now)
+    .all<BookingRow>();
+  return results.map(toBooking);
 }
