@@ -112,3 +112,18 @@ Outside Telegram there's no initData, so the Worker authenticates you as `DEV_US
 since Workers AI has no local simulator.
 
 `npm run check` typechecks app, worker, and config.
+`npm test` runs the worker tests (Node 22.5+).
+
+## CI and automatic deploys
+
+`.github/workflows/ci.yml` runs the typecheck and tests on every PR. When something merges
+to `main` and those pass, it runs `npm run deploy`, so the bot picks up the change.
+
+One-time setup, in GitHub → repo **Settings → Secrets and variables → Actions**:
+
+- `CLOUDFLARE_API_TOKEN`: create one at dash.cloudflare.com → My Profile → API Tokens,
+  using the **Edit Cloudflare Workers** template.
+- `CLOUDFLARE_ACCOUNT_ID`: shown on the Workers & Pages overview page.
+
+Database migrations are not applied automatically; run `npm run db:migrate` by hand when
+`migrations/` changes.
