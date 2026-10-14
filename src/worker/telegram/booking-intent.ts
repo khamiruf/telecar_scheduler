@@ -72,6 +72,14 @@ const PART_HOURS: Record<string, [number, number]> = {
   night: [18, 23],
 };
 
+/** Where a booking given only a start time ends: the end of the part of day it starts in. */
+function endOfPartHour(startHour: number): [number, number] {
+  if (startHour < 12) return [12, 0];
+  if (startHour < 18) return [18, 0];
+  if (startHour < 23) return [23, 0];
+  return [23, 59];
+}
+
 // The model only picks day indexes and a part-of-day / clock hours; all
 // timestamps are computed here. Small models reliably select indexes but
 // hallucinate digits when asked to emit unix timestamps directly.
@@ -94,8 +102,10 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
     `"next <weekday>" = the second day labelled with that weekday. ` +
     `Single day: endDay = startDay. Date range like "21-23 june": startDay = first date, endDay = last date. ` +
     `No time of day mentioned, or "whole day"/"all day": part = "whole". ` +
-    `"morning"/"afternoon"/"evening"/"tonight": set part, hours null. ` +
+    `"morning"/"afternoon"/"evening"/"tonight" with no clock time: set part, hours null. ` +
     `Clock times like "2pm to 6pm": startHour 14, endHour 18, part null. Half hours allowed, e.g. 14.5 for 2:30pm. ` +
+    `A single clock time like "tonight 7pm" or "at 2pm": startHour 19 (or 14), endHour null. ` +
+    `A clock time always wins over "morning"/"afternoon"/"evening"/"tonight", so never drop it. ` +
     `If you cannot make sense of the message at all, reply: {"error":"unclear"}`;
 
   try {
@@ -160,10 +170,16 @@ function resolveRange(entries: CalDay[], action: Record<string, unknown>): TimeR
 
   let startsAt: number;
   let endsAt: number;
-  if (sh !== null && eh !== null) {
+  if (sh !== null) {
     startsAt = sgUnix(start.y, start.m, start.d, Math.floor(sh), Math.round((sh % 1) * 60));
-    endsAt = sgUnix(end.y, end.m, end.d, Math.floor(eh), Math.round((eh % 1) * 60));
-    if (endsAt <= startsAt) endsAt += 86_400; // e.g. "10pm to 1am" crosses midnight
+    if (eh !== null) {
+      endsAt = sgUnix(end.y, end.m, end.d, Math.floor(eh), Math.round((eh % 1) * 60));
+      if (endsAt <= startsAt) endsAt += 86_400; // e.g. "10pm to 1am" crosses midnight
+    } else {
+      // Only a start time, e.g. "tonight 7pm": run to the end of that part of the day.
+      const [h, m] = endOfPartHour(sh);
+      endsAt = sgUnix(end.y, end.m, end.d, h, m) + (h === 23 && m === 59 ? 59 : 0);
+    }
   } else {
     const part = typeof action.part === "string" ? PART_HOURS[action.part.toLowerCase()] : undefined;
     if (part) {

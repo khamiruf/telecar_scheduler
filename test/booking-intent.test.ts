@@ -58,6 +58,24 @@ describe("parseCarRequests", () => {
     ]);
   });
 
+  it.each([
+    ["'tonight 7pm' runs to the end of the evening", { startDay: 0, part: "evening", startHour: 19 }, "2026-10-13T19:00", "2026-10-13T23:00"],
+    ["'tomorrow 2pm' runs to the end of the afternoon", { startDay: 1, startHour: 14 }, "2026-10-14T14:00", "2026-10-14T18:00"],
+    ["'saturday 9:30am' runs to noon", { startDay: 4, startHour: 9.5 }, "2026-10-17T09:30", "2026-10-17T12:00"],
+    ["'tonight 11:30pm' runs to the end of the day", { startDay: 0, startHour: 23.5 }, "2026-10-13T23:30", "2026-10-13T23:59:59"],
+  ])("a single start time: %s", async (_label, fields, from, to) => {
+    const { env } = envWith({ actions: [action("book", fields)] });
+    expect(await parseCarRequests(env, "book")).toEqual([{ type: "book", range: { startsAt: sg(from), endsAt: sg(to) } }]);
+  });
+
+  it("tells the model a clock time beats a part of day", async () => {
+    const { env, ai } = envWith({ actions: [action("book", { startDay: 0, startHour: 19 })] });
+    await parseCarRequests(env, "Book for tonight 7pm");
+    const systemPrompt = (ai.run.mock.calls[0] as any[])[1].messages[0].content as string;
+    expect(systemPrompt).toContain('"tonight 7pm"');
+    expect(systemPrompt).toContain("A clock time always wins");
+  });
+
   it("drops the range of a booking that has already ended", async () => {
     const { env } = envWith({ actions: [action("book", { startDay: 0, endDay: 0, startHour: 6, endHour: 8 })] });
     expect(await parseCarRequests(env, "book today 6am to 8am")).toEqual([{ type: "book", range: null }]);
