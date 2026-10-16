@@ -258,6 +258,13 @@ describe("cancelling bookings by text", () => {
     expect(messages()[0].body.reply_markup).toBeUndefined();
   });
 
+  it("keeps a parking update that merely mentions the app", async () => {
+    const { env, ai } = setup();
+    await sendText(env, "parked at 4B, update the app");
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(messages()[0].body.text).toContain("car is at <b>4B</b>");
+  });
+
   it("doesn't call the model for a plain location update", async () => {
     const { env, ai } = setup();
     await sendText(env, "4B");

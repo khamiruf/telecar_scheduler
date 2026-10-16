@@ -30,7 +30,8 @@ export function looksLikeCancel(text: string): boolean {
   return CANCEL_RE.test(text);
 }
 
-const VIEW_RE = /\b(bookings|reservations|upcoming|calendar|schedule|app|menu)\b/i;
+// "app"/"menu" only count after open/show/see, so "parked at 4B, update the app" stays a location update.
+const VIEW_RE = /\b(bookings|reservations|upcoming|calendar|schedule)\b|\b(open|show|see)\b.{0,20}\b(app|menu)\b/i;
 
 /** "Find my upcoming bookings", "show me the calendar", "open the app". */
 export function looksLikeView(text: string): boolean {
