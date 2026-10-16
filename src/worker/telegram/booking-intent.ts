@@ -10,10 +10,13 @@ export interface TimeRange {
  * "Cancel my Wednesday booking. Book tonight instead" → [cancel Wed, book tonight].
  * `range: null` on a booking means the model couldn't pin down the time.
  * On a cancel, "soonest" means no day was given; "unclear" means a day was given but unusable.
+ * "list" asks for upcoming bookings; "calendar" asks to open the schedule Mini App.
  */
 export type CarRequest =
   | { type: "book"; range: TimeRange | null }
-  | { type: "cancel"; when: TimeRange | "soonest" | "unclear" };
+  | { type: "cancel"; when: TimeRange | "soonest" | "unclear" }
+  | { type: "list"; whose: "mine" | "everyone" }
+  | { type: "calendar" };
 
 const BOOKING_RE = /\b(book|reserve|schedule|booking|need the car|taking the car|using the car)\b/i;
 
@@ -25,6 +28,13 @@ const CANCEL_RE = /\b(cancel|unbook|delete|remove)\b/i;
 
 export function looksLikeCancel(text: string): boolean {
   return CANCEL_RE.test(text);
+}
+
+const VIEW_RE = /\b(bookings|reservations|upcoming|calendar|schedule|app|menu)\b/i;
+
+/** "Find my upcoming bookings", "show me the calendar", "open the app". */
+export function looksLikeView(text: string): boolean {
+  return VIEW_RE.test(text);
 }
 
 // Returns unix timestamp for a given time on a given SGT calendar date.
@@ -88,14 +98,18 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
   const dayList = entries.map((e, i) => `${i}:${e.label}`).join(" ");
 
   const systemPrompt =
-    `You extract car booking and cancellation requests from a message. Today is ${entries[0].label} (Asia/Singapore). ` +
+    `You extract car booking, cancellation and viewing requests from a message. Today is ${entries[0].label} (Asia/Singapore). ` +
     `Numbered days: ${dayList} ` +
     `Reply with ONLY raw JSON, no markdown, no explanation: ` +
-    `{"actions":[{"type":<"book"|"cancel">,"startDay":<index or null>,"endDay":<index or null>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>}, ...]} ` +
+    `{"actions":[{"type":<"book"|"cancel"|"list"|"calendar">,"whose":<"mine"|"everyone"|null>,"startDay":<index or null>,"endDay":<index or null>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>}, ...]} ` +
     `Rules: ` +
     `One action per request, in the order mentioned. A message can hold several, e.g. ` +
     `"cancel wednesday, book tonight instead" or "move my booking from friday to saturday" = a cancel then a book. ` +
     `"cancel"/"unbook"/"delete"/"remove" = type "cancel". For a cancel with no day mentioned, startDay = null. ` +
+    `Asking to see or find bookings ("my upcoming bookings", "what have I booked", "who has the car this week") = type "list", ` +
+    `with whose "mine" for the sender's own bookings and "everyone" for all bookings; day fields null. ` +
+    `Asking to open or show the calendar, schedule, app or menu = type "calendar", other fields null. ` +
+    `"schedule" as a verb ("schedule the car for friday") is a booking, not "calendar". ` +
     `"today" = startDay 0. "tomorrow" = startDay 1. ` +
     `The week runs Monday to Sunday (Singapore), so Sunday is the last day of the week. ` +
     `A bare weekday or "this <weekday>" = the first day labelled with that weekday in the list (this week's). ` +
@@ -142,6 +156,10 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
         } else {
           requests.push({ type: "cancel", when: resolveRange(entries, action) ?? "unclear" });
         }
+      } else if (action.type === "list") {
+        requests.push({ type: "list", whose: action.whose === "everyone" ? "everyone" : "mine" });
+      } else if (action.type === "calendar") {
+        requests.push({ type: "calendar" });
       } else if (action.type === "book") {
         const range = resolveRange(entries, action);
         const future = range && range.endsAt >= Math.floor(Date.now() / 1000) ? range : null;
