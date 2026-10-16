@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 import type { Env } from "@/worker/env";
+import type { CarRequest } from "@/worker/telegram/booking-intent";
 
 /** Unix seconds for a Singapore wall-clock time, e.g. sg("2026-10-14T00:00"). */
 export function sg(local: string): number {
@@ -85,6 +86,6 @@ export function makeEnv(d1: D1Database, ai: Ai): Env {
 }
 
 /** Builds a model reply action with the defaults the prompt asks for. */
-export function action(type: "book" | "cancel", fields: Record<string, unknown> = {}) {
+export function action(type: CarRequest["type"], fields: Record<string, unknown> = {}) {
   return { type, startDay: null, endDay: null, part: null, startHour: null, endHour: null, ...fields };
 }

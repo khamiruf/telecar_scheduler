@@ -331,6 +331,16 @@ describe("cancelling bookings by text", () => {
     expect(buttons(messages()[0])).toEqual([`book:${sg("2026-10-14T20:00")}:${sg("2026-10-14T23:00")}`]);
   });
 
+  it("a booking for a part of today that has started begins now, ignoring bookings that already ended", async () => {
+    const { env } = setup({ actions: [action("book", { startDay: 0, endDay: 0, part: "morning" })] });
+    addBooking(SIBLING.id, "2026-10-13T07:00", "2026-10-13T09:00"); // over by 10:00
+
+    await sendText(env, "book this morning");
+
+    expect(messages()[0].body.text).toContain("Book the car?\n<b>Tue 13 Oct, 10:00 – Tue 13 Oct, 12:00</b>");
+    expect(buttons(messages()[0])[0]).toBe(`book:${sg("2026-10-13T10:00")}:${sg("2026-10-13T12:00")}`);
+  });
+
   it("an overlap with the sender's own booking still offers Confirm, with a note", async () => {
     const { env } = setup({
       actions: [action("cancel", { startDay: 0, part: "evening" }), action("book", { startDay: 0, startHour: 20 })],
@@ -356,7 +366,7 @@ describe("cancelling bookings by text", () => {
     ["hi", "help", "Here's what I can do"],
     ["thanks!", "thanks", "\u{1F44D}"],
   ])("'%s' → %s", async (text, type, reply) => {
-    const { env } = setup({ actions: [action(type as "book")] });
+    const { env } = setup({ actions: [action(type as "help" | "thanks")] });
     await sendText(env, text);
     expect(messages()[0].body.text).toContain(reply);
   });

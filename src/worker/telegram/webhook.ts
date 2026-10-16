@@ -307,7 +307,7 @@ async function handleCheckIntent(env: Env, message: TgMessage, userId: number, r
     await sendMessage(env, message.chat.id, "That time has already passed.");
     return;
   }
-  const window = { startsAt: Math.max(range.startsAt, now), endsAt: range.endsAt };
+  const window = { startsAt: Math.max(range.startsAt, Math.floor(now / 60) * 60), endsAt: range.endsAt };
   const { busy, free } = await availability(env, window);
   if (busy.length === 0) {
     await sendMessage(env, message.chat.id, `✅ The car is free ${formatRange(window)}.`, {
@@ -456,6 +456,11 @@ async function handleBookingIntent(
     );
     return;
   }
+
+  // "book this morning" at 10:00 means from now: bookings that already ended don't clash,
+  // and the database would reject a range overlapping them anyway.
+  const nowMinute = Math.floor(Date.now() / 60_000) * 60;
+  if (intent.startsAt < nowMinute) intent = { startsAt: nowMinute, endsAt: intent.endsAt };
 
   // Say who has it before offering a Confirm that would only fail. The sender's own
   // overlapping booking doesn't block: "cancel tonight, book tonight 8pm" cancels it first.
