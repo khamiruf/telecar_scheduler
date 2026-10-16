@@ -76,6 +76,18 @@ describe("parseCarRequests", () => {
     expect(systemPrompt).toContain("A clock time always wins");
   });
 
+  it("reads list and calendar requests", async () => {
+    const { env } = envWith({
+      actions: [action("list", { whose: "mine" }), action("list", { whose: "everyone" }), action("list"), action("calendar")],
+    });
+    expect(await parseCarRequests(env, "my bookings, everyone's, and the calendar")).toEqual([
+      { type: "list", whose: "mine" },
+      { type: "list", whose: "everyone" },
+      { type: "list", whose: "mine" }, // whose missing → the sender's own
+      { type: "calendar" },
+    ]);
+  });
+
   it("drops the range of a booking that has already ended", async () => {
     const { env } = envWith({ actions: [action("book", { startDay: 0, endDay: 0, startHour: 6, endHour: 8 })] });
     expect(await parseCarRequests(env, "book today 6am to 8am")).toEqual([{ type: "book", range: null }]);

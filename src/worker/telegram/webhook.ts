@@ -1,11 +1,11 @@
 import type { Env } from "../env";
 import { getCarStatus, setCarLocation } from "../core/car";
-import { cancelBooking, createBooking, currentOrNextBooking, upcomingBookingsForUser } from "../core/bookings";
+import { cancelBooking, createBooking, currentOrNextBooking, listBookings, upcomingBookingsForUser } from "../core/bookings";
 import { addUser, resolveAuthorizedUser } from "../core/users";
 import { answerCallbackQuery, downloadFile, escapeHtml, sendMessage, type TgCallbackQuery, type TgMessage, type TgUpdate } from "./api";
 import { formatRange, notifyBooked, notifyCancelled, notifyLocation, statusLine } from "./notify";
 import { parseLevel } from "./parse";
-import { looksLikeBooking, looksLikeCancel, parseCarRequests, type TimeRange } from "./booking-intent";
+import { looksLikeBooking, looksLikeCancel, looksLikeView, parseCarRequests, type TimeRange } from "./booking-intent";
 import type { Booking } from "@/shared/types";
 
 /** Entry point for POST /telegram/webhook. Telegram retries on non-2xx, so we always 200. */
@@ -56,7 +56,8 @@ async function handleMessage(env: Env, message: TgMessage, appUrl: string): Prom
       env,
       message.chat.id,
       `Hey ${escapeHtml(user.firstName)}! Send me a parking level (text or voice note) ` +
-        `to update where the car is, or /where to check on it.`,
+        `to update where the car is, or /where to check on it. ` +
+        `You can also text me to book, cancel or list bookings, or /calendar for the schedule.`,
       {
         replyMarkup: isPrivate
           ? {
@@ -109,12 +110,13 @@ async function handleMessage(env: Env, message: TgMessage, appUrl: string): Prom
     return;
   }
 
-  if (command === "/app") {
-    await sendMessage(env, message.chat.id, "Here you go:", {
-      replyMarkup: {
-        inline_keyboard: [[{ text: "\u{1F4C5} Open schedule", web_app: { url: appUrl } }]],
-      },
-    });
+  if (command === "/app" || command === "/calendar") {
+    await sendSchedule(env, message, appUrl);
+    return;
+  }
+
+  if (command === "/bookings") {
+    await handleListIntent(env, message, user.telegramId, "mine");
     return;
   }
 
@@ -129,10 +131,10 @@ async function handleMessage(env: Env, message: TgMessage, appUrl: string): Prom
     return;
   }
 
-  // Plain text: check cancel/booking intent first (private chat only), then try location parse.
+  // Plain text: check cancel/booking/viewing intent first (private chat only), then try location parse.
   if (text && !command) {
-    if (isPrivate && (looksLikeCancel(text) || looksLikeBooking(text))) {
-      await handleBookingRequests(env, message, user.telegramId, text);
+    if (isPrivate && (looksLikeCancel(text) || looksLikeBooking(text) || looksLikeView(text))) {
+      await handleBookingRequests(env, message, user.telegramId, text, appUrl);
       return;
     }
     await handleLocationText(env, message, user.firstName, user.telegramId, text, isPrivate);
@@ -140,7 +142,7 @@ async function handleMessage(env: Env, message: TgMessage, appUrl: string): Prom
   }
 
   if (command && isPrivate) {
-    await sendMessage(env, message.chat.id, "I know /where, /app, /add and /id.");
+    await sendMessage(env, message.chat.id, "I know /where, /calendar, /bookings, /add and /id.");
   }
 }
 
@@ -174,17 +176,68 @@ async function handleLocationText(
  * the model then says what the message wants, which can be several things
  * ("Cancel my Wednesday booking, book tonight instead").
  */
-async function handleBookingRequests(env: Env, message: TgMessage, userId: number, text: string): Promise<void> {
+async function handleBookingRequests(
+  env: Env,
+  message: TgMessage,
+  userId: number,
+  text: string,
+  appUrl: string,
+): Promise<void> {
   const requests = await parseCarRequests(env, text);
   if (!requests) {
     if (looksLikeCancel(text)) await handleCancelIntent(env, message, userId, "unclear");
-    else await handleBookingIntent(env, message, null);
+    else if (looksLikeBooking(text)) await handleBookingIntent(env, message, null);
+    else await sendSchedule(env, message, appUrl); // "show me the calendar" etc.
     return;
   }
   for (const request of requests) {
     if (request.type === "cancel") await handleCancelIntent(env, message, userId, request.when);
+    else if (request.type === "list") await handleListIntent(env, message, userId, request.whose);
+    else if (request.type === "calendar") await sendSchedule(env, message, appUrl);
     else await handleBookingIntent(env, message, request.range);
   }
+}
+
+/** The schedule Mini App button. Telegram only allows web_app buttons in private chats. */
+async function sendSchedule(env: Env, message: TgMessage, appUrl: string): Promise<void> {
+  if (message.chat.type !== "private") {
+    await sendMessage(env, message.chat.id, "Message me privately and send /calendar to open the schedule.");
+    return;
+  }
+  await sendMessage(env, message.chat.id, "Here you go:", {
+    replyMarkup: { inline_keyboard: [[{ text: "\u{1F4C5} Open schedule", web_app: { url: appUrl } }]] },
+  });
+}
+
+const LIST_WINDOW_SECONDS = 21 * 86_400; // matches how far ahead the schedule goes
+
+/** Lists upcoming bookings: the sender's own, or everyone's for the next three weeks. */
+async function handleListIntent(
+  env: Env,
+  message: TgMessage,
+  userId: number,
+  whose: "mine" | "everyone",
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  if (whose === "mine") {
+    const mine = await upcomingBookingsForUser(env, userId, now);
+    await sendMessage(
+      env,
+      message.chat.id,
+      mine.length === 0
+        ? "You have no upcoming bookings."
+        : `\u{1F4C5} Your upcoming bookings:\n${mine.map((b) => `· ${formatRange(b)}`).join("\n")}`,
+    );
+    return;
+  }
+  const all = await listBookings(env, now, now + LIST_WINDOW_SECONDS);
+  await sendMessage(
+    env,
+    message.chat.id,
+    all.length === 0
+      ? "No upcoming bookings — the car is free."
+      : `\u{1F4C5} Upcoming bookings:\n${all.map((b) => `· ${formatRange(b)} · ${escapeHtml(b.userName)}`).join("\n")}`,
+  );
 }
 
 const MAX_CANCEL_CHOICES = 8;

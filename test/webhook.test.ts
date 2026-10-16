@@ -180,6 +180,91 @@ describe("cancelling bookings by text", () => {
     expect(messages()[0].body.text).toBe("Okay, booking kept.");
   });
 
+  it("'Find my upcoming bookings' lists only the user's own upcoming bookings, soonest first", async () => {
+    const { env } = setup({ actions: [action("list", { whose: "mine" })] });
+    addBooking(FATIM.id, "2026-10-08T09:00", "2026-10-08T12:00"); // over
+    addBooking(SIBLING.id, "2026-10-14T09:00", "2026-10-14T12:00"); // not Fatim's
+    addBooking(FATIM.id, "2026-10-17T14:00", "2026-10-17T18:00");
+    addBooking(FATIM.id, "2026-10-15T19:00", "2026-10-15T23:00");
+
+    await sendText(env, "Find my upcoming bookings");
+
+    expect(messages()).toHaveLength(1);
+    expect(messages()[0].body.text).toBe(
+      "\u{1F4C5} Your upcoming bookings:\n· Thu 15 Oct, 19:00–23:00\n· Sat 17 Oct, 14:00–18:00",
+    );
+  });
+
+  it("lists everyone's bookings with names when asked who has the car", async () => {
+    const { env } = setup({ actions: [action("list", { whose: "everyone" })] });
+    addBooking(SIBLING.id, "2026-10-14T09:00", "2026-10-14T12:00");
+    addBooking(FATIM.id, "2026-10-15T19:00", "2026-10-15T23:00");
+
+    await sendText(env, "who has the car this week? show all bookings");
+
+    expect(messages()[0].body.text).toBe(
+      "\u{1F4C5} Upcoming bookings:\n· Wed 14 Oct, 09:00–12:00 · Sam\n· Thu 15 Oct, 19:00–23:00 · Fatim",
+    );
+  });
+
+  it("says so when there are no bookings to list", async () => {
+    const { env } = setup({ actions: [action("list", { whose: "mine" })] });
+    await sendText(env, "my bookings");
+    expect(messages()[0].body.text).toBe("You have no upcoming bookings.");
+  });
+
+  it("/bookings lists bookings without calling the model", async () => {
+    const { env, ai } = setup();
+    addBooking(FATIM.id, "2026-10-15T19:00", "2026-10-15T23:00");
+    await sendText(env, "/bookings");
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(messages()[0].body.text).toContain("Thu 15 Oct, 19:00–23:00");
+  });
+
+  it.each(["Show me the calendar", "open the app", "show menu"])("'%s' sends the schedule button", async (text) => {
+    const { env } = setup({ actions: [action("calendar")] });
+    await sendText(env, text);
+    const button = messages()[0].body.reply_markup.inline_keyboard[0][0];
+    expect(button.web_app).toEqual({ url: "https://app.example" });
+  });
+
+  it("/calendar sends the schedule button without calling the model", async () => {
+    const { env, ai } = setup();
+    await sendText(env, "/calendar");
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(messages()[0].body.reply_markup.inline_keyboard[0][0].web_app).toEqual({ url: "https://app.example" });
+  });
+
+  it("falls back to the schedule button when the model fails on a calendar request", async () => {
+    const { env } = setup(new Error("AI down"));
+    await sendText(env, "Show me the calendar");
+    expect(messages()[0].body.reply_markup.inline_keyboard[0][0].web_app).toEqual({ url: "https://app.example" });
+  });
+
+  it("handles a list alongside a cancel in one message", async () => {
+    const { env } = setup({ actions: [action("cancel"), action("list", { whose: "mine" })] });
+    const thu = addBooking(FATIM.id, "2026-10-15T19:00", "2026-10-15T23:00");
+
+    await sendText(env, "cancel my booking and show my bookings");
+
+    expect(buttons(messages()[0])).toEqual([`unbook:${thu}`, "unbook_keep"]);
+    expect(messages()[1].body.text).toContain("Your upcoming bookings");
+  });
+
+  it("in a group, /calendar points to a private chat instead of sending a web_app button", async () => {
+    const { env } = setup();
+    await sendText(env, "/calendar", FATIM, "group");
+    expect(messages()[0].body.text).toContain("Message me privately");
+    expect(messages()[0].body.reply_markup).toBeUndefined();
+  });
+
+  it("keeps a parking update that merely mentions the app", async () => {
+    const { env, ai } = setup();
+    await sendText(env, "parked at 4B, update the app");
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(messages()[0].body.text).toContain("car is at <b>4B</b>");
+  });
+
   it("doesn't call the model for a plain location update", async () => {
     const { env, ai } = setup();
     await sendText(env, "4B");
