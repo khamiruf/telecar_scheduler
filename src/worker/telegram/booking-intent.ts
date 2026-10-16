@@ -11,12 +11,19 @@ export interface TimeRange {
  * `range: null` on a booking means the model couldn't pin down the time.
  * On a cancel, "soonest" means no day was given; "unclear" means a day was given but unusable.
  * "list" asks for upcoming bookings; "calendar" asks to open the schedule Mini App.
+ * "check" asks whether the car is free (range null = couldn't pin down the time);
+ * "where" asks where the car is; "location" reports where it was parked.
  */
 export type CarRequest =
   | { type: "book"; range: TimeRange | null }
   | { type: "cancel"; when: TimeRange | "soonest" | "unclear" }
   | { type: "list"; whose: "mine" | "everyone" }
-  | { type: "calendar" };
+  | { type: "calendar" }
+  | { type: "check"; range: TimeRange | null }
+  | { type: "where" }
+  | { type: "location" }
+  | { type: "help" }
+  | { type: "thanks" };
 
 const BOOKING_RE = /\b(book|reserve|schedule|booking|need the car|taking the car|using the car)\b/i;
 
@@ -36,6 +43,25 @@ const VIEW_RE = /\b(bookings|reservations|upcoming|calendar|schedule)\b|\b(open|
 /** "Find my upcoming bookings", "show me the calendar", "open the app". */
 export function looksLikeView(text: string): boolean {
   return VIEW_RE.test(text);
+}
+
+const QUESTION_RE = /\?|\b(where|which|who|when|free|available|anyone|help)\b/i;
+
+/**
+ * Whether a message that contains a parking level might be asking for something else
+ * ("is the car at 4B?", "book 4B... "), in which case the model should read it.
+ */
+export function mightBeRequest(text: string): boolean {
+  return looksLikeBooking(text) || looksLikeCancel(text) || looksLikeView(text) || QUESTION_RE.test(text);
+}
+
+function sgClock(): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Singapore",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date());
 }
 
 // Returns unix timestamp for a given time on a given SGT calendar date.
@@ -99,10 +125,11 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
   const dayList = entries.map((e, i) => `${i}:${e.label}`).join(" ");
 
   const systemPrompt =
-    `You extract car booking, cancellation and viewing requests from a message. Today is ${entries[0].label} (Asia/Singapore). ` +
+    `You read messages sent to a family's shared-car Telegram bot and extract what the sender wants. ` +
+    `Today is ${entries[0].label} and the time is ${sgClock()} (Asia/Singapore). ` +
     `Numbered days: ${dayList} ` +
     `Reply with ONLY raw JSON, no markdown, no explanation: ` +
-    `{"actions":[{"type":<"book"|"cancel"|"list"|"calendar">,"whose":<"mine"|"everyone"|null>,"startDay":<index or null>,"endDay":<index or null>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>}, ...]} ` +
+    `{"actions":[{"type":<"book"|"cancel"|"list"|"calendar"|"check"|"where"|"location"|"help"|"thanks">,"whose":<"mine"|"everyone"|null>,"startDay":<index or null>,"endDay":<index or null>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>}, ...]} ` +
     `Rules: ` +
     `One action per request, in the order mentioned. A message can hold several, e.g. ` +
     `"cancel wednesday, book tonight instead" or "move my booking from friday to saturday" = a cancel then a book. ` +
@@ -111,6 +138,17 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
     `with whose "mine" for the sender's own bookings and "everyone" for all bookings; day fields null. ` +
     `Asking to open or show the calendar, schedule, app or menu = type "calendar", other fields null. ` +
     `"schedule" as a verb ("schedule the car for friday") is a booking, not "calendar". ` +
+    `Asking whether the car is free or if anyone is using it at some time ("is the car free tomorrow evening?", ` +
+    `"anyone using the car tonight?", "when is the car free on saturday?") = type "check" with the day/time fields; ` +
+    `if no day is given, startDay 0. "can I take the car later?" is a check, not a booking. ` +
+    `Asking where the car is now, which level it is on, or who has it right now = type "where", other fields null. ` +
+    `Saying where the car was parked ("parked at B2", "car is on level 4") = type "location", other fields null. ` +
+    `Greetings, "help", or "what can you do" = type "help". "thanks", "ok", "noted" and similar = type "thanks". ` +
+    `Messages may be in English, Singlish or Malay: "tmr"/"tmrw"/"esok" = tomorrow, "tonite"/"malam ni" = tonight, ` +
+    `"pagi" = morning, "petang" = afternoon, "tempah" = book, "batal" = cancel, "kereta" = car. ` +
+    `"now"/"right now" = startDay 0 and startHour = the current time, rounded down to the half hour. ` +
+    `A duration like "3pm for 2 hours" = startHour 15, endHour 17. ` +
+    `"this weekend" = this week's Saturday to Sunday; "next weekend" = the following Saturday to Sunday. ` +
     `"today" = startDay 0. "tomorrow" = startDay 1. ` +
     `The week runs Monday to Sunday (Singapore), so Sunday is the last day of the week. ` +
     `A bare weekday or "this <weekday>" = the first day labelled with that weekday in the list (this week's). ` +
@@ -157,6 +195,12 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
         } else {
           requests.push({ type: "cancel", when: resolveRange(entries, action) ?? "unclear" });
         }
+      } else if (action.type === "check") {
+        // No day means today; the handler only looks from now onwards.
+        const withDay = action.startDay === null || action.startDay === undefined ? { ...action, startDay: 0 } : action;
+        requests.push({ type: "check", range: resolveRange(entries, withDay) });
+      } else if (action.type === "where" || action.type === "location" || action.type === "help" || action.type === "thanks") {
+        requests.push({ type: action.type });
       } else if (action.type === "list") {
         requests.push({ type: "list", whose: action.whose === "everyone" ? "everyone" : "mine" });
       } else if (action.type === "calendar") {

@@ -88,6 +88,35 @@ describe("parseCarRequests", () => {
     ]);
   });
 
+  it("reads availability checks, defaulting to today when no day is given", async () => {
+    const { env } = envWith({
+      actions: [action("check", { startDay: 1, endDay: 1, part: "evening" }), action("check", { part: "whole" })],
+    });
+    expect(await parseCarRequests(env, "is the car free tomorrow evening? and today?")).toEqual([
+      { type: "check", range: { startsAt: sg("2026-10-14T18:00"), endsAt: sg("2026-10-14T23:00") } },
+      { type: "check", range: { startsAt: sg("2026-10-13T00:00"), endsAt: sg("2026-10-13T23:59:59") } },
+    ]);
+  });
+
+  it("reads where / location / help / thanks", async () => {
+    const { env } = envWith({ actions: [action("where"), action("location"), action("help"), action("thanks")] });
+    expect(await parseCarRequests(env, "...")).toEqual([
+      { type: "where" },
+      { type: "location" },
+      { type: "help" },
+      { type: "thanks" },
+    ]);
+  });
+
+  it("gives the model the current Singapore time and the Malay/Singlish words", async () => {
+    const { env, ai } = envWith({ actions: [action("book", { startDay: 0, startHour: 10 })] });
+    await parseCarRequests(env, "need the car now");
+    const systemPrompt = (ai.run.mock.calls[0] as any[])[1].messages[0].content as string;
+    expect(systemPrompt).toContain("the time is 10:00");
+    expect(systemPrompt).toContain('"esok" = tomorrow');
+    expect(systemPrompt).toContain('"this weekend"');
+  });
+
   it("drops the range of a booking that has already ended", async () => {
     const { env } = envWith({ actions: [action("book", { startDay: 0, endDay: 0, startHour: 6, endHour: 8 })] });
     expect(await parseCarRequests(env, "book today 6am to 8am")).toEqual([{ type: "book", range: null }]);

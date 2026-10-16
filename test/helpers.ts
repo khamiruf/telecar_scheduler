@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 import type { Env } from "@/worker/env";
+import type { CarRequest } from "@/worker/telegram/booking-intent";
 
 /** Unix seconds for a Singapore wall-clock time, e.g. sg("2026-10-14T00:00"). */
 export function sg(local: string): number {
@@ -38,11 +39,17 @@ export function fakeD1() {
   return { db, d1: d1 as unknown as D1Database };
 }
 
+/** A queued AI reply returned as-is instead of wrapped in `response`, e.g. a Whisper transcript. */
+export function whisper(text: string) {
+  return { __raw: { text } };
+}
+
 /** Workers AI stub: each call returns the next queued reply (an object, a string, or an Error to throw). */
 export function fakeAI(...replies: unknown[]) {
   const run = vi.fn(async () => {
     const next = replies.shift();
     if (next instanceof Error) throw next;
+    if (next && typeof next === "object" && "__raw" in next) return (next as { __raw: unknown }).__raw;
     return { response: next };
   });
   return { run } as unknown as Ai & { run: typeof run };
@@ -57,8 +64,11 @@ export interface SentCall {
 export function captureTelegram(): SentCall[] {
   const calls: SentCall[] = [];
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
-    calls.push({ method: String(url).split("/").pop()!, body: JSON.parse(String(init?.body ?? "{}")) });
-    return new Response(JSON.stringify({ ok: true, result: {} }));
+    if (String(url).includes("/file/bot")) return new Response(new Uint8Array([1, 2, 3])); // voice note audio
+    const method = String(url).split("/").pop()!;
+    calls.push({ method, body: JSON.parse(String(init?.body ?? "{}")) });
+    const result = method === "getFile" ? { file_path: "voice/1.oga" } : {};
+    return new Response(JSON.stringify({ ok: true, result }));
   });
   return calls;
 }
@@ -76,6 +86,6 @@ export function makeEnv(d1: D1Database, ai: Ai): Env {
 }
 
 /** Builds a model reply action with the defaults the prompt asks for. */
-export function action(type: "book" | "cancel", fields: Record<string, unknown> = {}) {
+export function action(type: CarRequest["type"], fields: Record<string, unknown> = {}) {
   return { type, startDay: null, endDay: null, part: null, startHour: null, endHour: null, ...fields };
 }

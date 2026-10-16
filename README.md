@@ -95,11 +95,13 @@ Each person messages the bot `/start`; it replies with their id. You add them:
 | Action | How |
 |---|---|
 | Update parking spot | Voice note or text to the bot: "parked at 4B", `B2`, "level five" |
-| Check on the car | `/where` (works in the group too) |
+| Check on the car | `/where` (works in the group too), or ask "where's the car?" |
+| Is it free? | "is the car free tomorrow evening?" — replies with who has it, free gaps and Book buttons |
 | Book / cancel | Mini App — tap a free hour, extend by tapping another, confirm |
 | Book / cancel by text | "book tonight 7pm", "cancel my booking", "move friday to saturday" |
 | See bookings | `/bookings`, or "find my upcoming bookings" / "who has the car this week" |
 | Open the schedule | `/calendar` (or `/app`), or "show me the calendar" |
+| Help | `/help`, "what can you do?" — private-chat text and voice notes accept all of the above, incl. Singlish/Malay |
 | Reminders | The group gets a ping ~30 min before each booking starts |
 
 ## Development
