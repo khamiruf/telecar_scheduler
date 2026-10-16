@@ -3,7 +3,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { handleUpdate } from "@/worker/telegram/webhook";
 import { cancelBooking } from "@/worker/core/bookings";
 import type { Env } from "@/worker/env";
-import { action, captureTelegram, fakeAI, fakeD1, makeEnv, sg, type SentCall } from "./helpers";
+import { action, captureTelegram, fakeAI, fakeD1, makeEnv, sg, whisper, type SentCall } from "./helpers";
+import { notifyReminder } from "@/worker/telegram/notify";
 
 // Tuesday 13 Oct 2026, 10:00 in Singapore. Day index 0 = Tue 13, 1 = Wed 14, ...
 const NOW = sg("2026-10-13T10:00");
@@ -263,6 +264,158 @@ describe("cancelling bookings by text", () => {
     await sendText(env, "parked at 4B, update the app");
     expect(ai.run).not.toHaveBeenCalled();
     expect(messages()[0].body.text).toContain("car is at <b>4B</b>");
+  });
+
+  it("'where's the car?' answers with the location and who has it", async () => {
+    const { env } = setup({ actions: [action("where")] });
+    db.exec(`INSERT INTO car_status (id, level, updated_by, updated_at) VALUES (1, 'B2', ${SIBLING.id}, ${NOW - 3600})`);
+    addBooking(SIBLING.id, "2026-10-13T09:00", "2026-10-13T12:00");
+
+    await sendText(env, "where's the car?");
+
+    expect(messages()[0].body.text).toContain("<b>B2</b> · left by Sam, 1h ago");
+    expect(messages()[0].body.text).toContain("In use by <b>Sam</b>");
+  });
+
+  it("'is the car free tomorrow evening?' says free and offers a Book it button", async () => {
+    const { env } = setup({ actions: [action("check", { startDay: 1, endDay: 1, part: "evening" })] });
+
+    await sendText(env, "is the car free tomorrow evening?");
+
+    expect(messages()[0].body.text).toBe("✅ The car is free Wed 14 Oct, 18:00–23:00.");
+    expect(buttons(messages()[0])).toEqual([`book:${sg("2026-10-14T18:00")}:${sg("2026-10-14T23:00")}`]);
+  });
+
+  it("when busy, says who has it and offers the free gaps", async () => {
+    const { env } = setup({ actions: [action("check", { startDay: 1, endDay: 1, part: "evening" })] });
+    addBooking(SIBLING.id, "2026-10-14T19:00", "2026-10-14T20:30");
+
+    await sendText(env, "anyone using the car tomorrow night?");
+
+    expect(messages()[0].body.text).toBe(
+      "\u{1F697} Taken:\n· Wed 14 Oct, 19:00–20:30 · Sam\n\nFree:\n· Wed 14 Oct, 18:00–19:00\n· Wed 14 Oct, 20:30–23:00",
+    );
+    expect(buttons(messages()[0])).toEqual([
+      `book:${sg("2026-10-14T18:00")}:${sg("2026-10-14T19:00")}`,
+      `book:${sg("2026-10-14T20:30")}:${sg("2026-10-14T23:00")}`,
+    ]);
+  });
+
+  it("a check for today only looks from now onwards", async () => {
+    const { env } = setup({ actions: [action("check", { startDay: 0, part: "whole" })] });
+    await sendText(env, "is the car free today?");
+    expect(messages()[0].body.text).toBe("✅ The car is free Tue 13 Oct, 10:00–23:59.");
+  });
+
+  it("a weekend check shows both days", async () => {
+    const { env } = setup({ actions: [action("check", { startDay: 4, endDay: 5, part: "whole" })] });
+    await sendText(env, "is the car free this weekend?");
+    expect(messages()[0].body.text).toBe("✅ The car is free Sat 17 Oct, 00:00–Sun 18 Oct, 23:59.");
+  });
+
+  it("tapping a Book it button books that slot", async () => {
+    const { env } = setup();
+    await press(env, `book:${sg("2026-10-14T18:00")}:${sg("2026-10-14T23:00")}`);
+    expect(db.prepare("SELECT user_id, starts_at, ends_at FROM bookings").all()).toEqual([
+      { user_id: FATIM.id, starts_at: sg("2026-10-14T18:00"), ends_at: sg("2026-10-14T23:00") },
+    ]);
+  });
+
+  it("a booking that clashes with someone else says who has it instead of offering Confirm", async () => {
+    const { env } = setup({ actions: [action("book", { startDay: 1, endDay: 1, part: "evening" })] });
+    addBooking(SIBLING.id, "2026-10-14T18:00", "2026-10-14T20:00");
+
+    await sendText(env, "book tomorrow night");
+
+    expect(messages()[0].body.text).toContain("⚠️ The car is already booked then:\n· Wed 14 Oct, 18:00–20:00 · Sam");
+    expect(buttons(messages()[0])).toEqual([`book:${sg("2026-10-14T20:00")}:${sg("2026-10-14T23:00")}`]);
+  });
+
+  it("an overlap with the sender's own booking still offers Confirm, with a note", async () => {
+    const { env } = setup({
+      actions: [action("cancel", { startDay: 0, part: "evening" }), action("book", { startDay: 0, startHour: 20 })],
+    });
+    const tonight = addBooking(FATIM.id, "2026-10-13T18:00", "2026-10-13T23:00");
+
+    await sendText(env, "cancel tonight and book tonight 8pm instead");
+
+    expect(buttons(messages()[0])).toEqual([`unbook:${tonight}`, "unbook_keep"]);
+    expect(messages()[1].body.text).toContain("Book the car?");
+    expect(messages()[1].body.text).toContain("overlaps your booking Tue 13 Oct, 18:00–23:00");
+    expect(buttons(messages()[1])[0]).toBe(`book:${sg("2026-10-13T20:00")}:${sg("2026-10-13T23:00")}`);
+  });
+
+  it("messages without keywords now reach the model", async () => {
+    const { env, ai } = setup({ actions: [action("check", { startDay: 0, part: "evening" })] });
+    await sendText(env, "can I take the car later");
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(messages()[0].body.text).toContain("free");
+  });
+
+  it.each([
+    ["hi", "help", "Here's what I can do"],
+    ["thanks!", "thanks", "\u{1F44D}"],
+  ])("'%s' → %s", async (text, type, reply) => {
+    const { env } = setup({ actions: [action(type as "book")] });
+    await sendText(env, text);
+    expect(messages()[0].body.text).toContain(reply);
+  });
+
+  it("falls back to the help text when nothing makes sense, instead of 'couldn't find a level'", async () => {
+    const { env } = setup({ error: "unclear" });
+    await sendText(env, "blah blah");
+    expect(messages()[0].body.text).toContain("Not sure what you mean");
+    expect(messages()[0].body.text).toContain("Here's what I can do");
+    expect(messages()[0].body.text).not.toContain("couldn't find a level");
+  });
+
+  it("a parking update phrased as a question goes through the model and is still saved", async () => {
+    const { env } = setup({ actions: [action("location")] });
+    await sendText(env, "left the car at B2 near the lift, ok?");
+    expect(db.prepare("SELECT level FROM car_status").get()).toEqual({ level: "B2" });
+  });
+
+  it("a voice note asking to book is read like text", async () => {
+    const { env } = setup(whisper("book tomorrow at 2pm"), { actions: [action("book", { startDay: 1, startHour: 14 })] });
+    await handleUpdate(
+      env,
+      { update_id: ++updateId, message: { message_id: 1, from: FATIM, chat: { id: FATIM.id, type: "private" }, voice: { file_id: "f", duration: 3 } } },
+      "https://app.example",
+    );
+    expect(messages()[0].body.text).toContain("Book the car?");
+    expect(buttons(messages()[0])[0]).toBe(`book:${sg("2026-10-14T14:00")}:${sg("2026-10-14T18:00")}`);
+  });
+
+  it("a misheard voice note echoes what was heard", async () => {
+    const { env } = setup(whisper("purple monkey"), { error: "unclear" });
+    await handleUpdate(
+      env,
+      { update_id: ++updateId, message: { message_id: 1, from: FATIM, chat: { id: FATIM.id, type: "private" }, voice: { file_id: "f", duration: 3 } } },
+      "https://app.example",
+    );
+    expect(messages()[0].body.text).toContain("I heard: “purple monkey”");
+  });
+
+  it("/help shows the help text without calling the model", async () => {
+    const { env, ai } = setup();
+    await sendText(env, "/help");
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(messages()[0].body.text).toContain("Here's what I can do");
+  });
+
+  it("group text stays a silent location parser", async () => {
+    const { env, ai } = setup();
+    await sendText(env, "anyone free for lunch?", SIBLING, "group");
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(messages()).toHaveLength(0);
+  });
+
+  it("the reminder says where the car is", async () => {
+    const { env } = setup();
+    db.exec(`INSERT INTO car_status (id, level, updated_by, updated_at) VALUES (1, '4B', ${SIBLING.id}, ${NOW})`);
+    const id = addBooking(FATIM.id, "2026-10-13T10:20", "2026-10-13T12:00");
+    await notifyReminder(env, { id, userId: FATIM.id, userName: "Fatim", startsAt: sg("2026-10-13T10:20"), endsAt: sg("2026-10-13T12:00") });
+    expect(messages()[0].body.text).toBe("⏰ Your booking starts at Tue 10:20 · car is at <b>4B</b>");
   });
 
   it("doesn't call the model for a plain location update", async () => {

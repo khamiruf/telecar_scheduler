@@ -2,6 +2,7 @@ import type { Env } from "../env";
 import type { Booking, CarStatus } from "@/shared/types";
 import { sendMessage, escapeHtml } from "./api";
 import { getAllUsers } from "../core/users";
+import { getCarStatus } from "../core/car";
 
 const TIME_ZONE = "Asia/Singapore"; // family's home timezone, used for bot messages
 
@@ -15,8 +16,8 @@ export function formatTime(unixSeconds: number): string {
   }).format(new Date(unixSeconds * 1000));
 }
 
-export function formatRange(booking: Booking): string {
-  const start = new Intl.DateTimeFormat("en-GB", {
+export function formatRange(booking: Pick<Booking, "startsAt" | "endsAt">): string {
+  const dateTime = new Intl.DateTimeFormat("en-GB", {
     timeZone: TIME_ZONE,
     weekday: "short",
     day: "numeric",
@@ -24,14 +25,19 @@ export function formatRange(booking: Booking): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(booking.startsAt * 1000));
-  const endTime = new Intl.DateTimeFormat("en-GB", {
+  });
+  const time = new Intl.DateTimeFormat("en-GB", {
     timeZone: TIME_ZONE,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(booking.endsAt * 1000));
-  return `${start}–${endTime}`;
+  });
+  const day = new Intl.DateTimeFormat("en-GB", { timeZone: TIME_ZONE, dateStyle: "short" });
+  const start = new Date(booking.startsAt * 1000);
+  // The last second of a booking decides its end day, so one ending at 00:00 stays on the day it started.
+  const sameDay = day.format(start) === day.format(new Date((booking.endsAt - 1) * 1000));
+  const end = new Date(booking.endsAt * 1000);
+  return `${dateTime.format(start)}–${sameDay ? time.format(end) : dateTime.format(end)}`;
 }
 
 export function formatAgo(unixSeconds: number): string {
@@ -85,5 +91,7 @@ export async function notifyCancelled(env: Env, booking: Booking): Promise<void>
 }
 
 export async function notifyReminder(env: Env, booking: Booking): Promise<void> {
-  await notify(env, booking.userId, `⏰ Your booking starts at ${formatTime(booking.startsAt)}`);
+  const status = await getCarStatus(env);
+  const where = status ? ` · car is at <b>${escapeHtml(status.level)}</b>` : "";
+  await notify(env, booking.userId, `⏰ Your booking starts at ${formatTime(booking.startsAt)}${where}`);
 }
