@@ -58,6 +58,26 @@ const messages = () => calls.filter((c) => c.method === "sendMessage");
 const buttons = (call: SentCall): string[] =>
   (call.body.reply_markup?.inline_keyboard ?? []).flat().map((b: { callback_data?: string }) => b.callback_data);
 
+describe("booking too far ahead", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW * 1000);
+    calls = captureTelegram();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("says how far ahead bookings can go", async () => {
+    const { env } = setup({ actions: [action("book", { startDay: -1, startHour: 15, endHour: 20 })] });
+    await sendText(env, "book 6 dec next year 3-8pm");
+    expect(messages()).toHaveLength(1);
+    expect(messages()[0].body.text).toContain("up to 120 days in advance");
+    expect(bookingIds()).toEqual([]);
+  });
+});
+
 describe("cancelling bookings by text", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });

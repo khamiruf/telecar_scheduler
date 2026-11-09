@@ -47,7 +47,7 @@ describe("parseCarRequests", () => {
   });
 
   it("marks a cancel with an out-of-range day as 'unclear'", async () => {
-    const { env } = envWith({ actions: [action("cancel", { startDay: 99 })] });
+    const { env } = envWith({ actions: [action("cancel", { startDay: 999 })] });
     expect(await parseCarRequests(env, "cancel the one in march")).toEqual([{ type: "cancel", when: "unclear" }]);
   });
 
@@ -115,6 +115,21 @@ describe("parseCarRequests", () => {
     expect(systemPrompt).toContain("the time is 10:00");
     expect(systemPrompt).toContain('"esok" = tomorrow');
     expect(systemPrompt).toContain('"this weekend"');
+  });
+
+  it("books a date weeks ahead, e.g. '6 Dec 3-8pm' from 13 Oct (day 54)", async () => {
+    const { env, ai } = envWith({ actions: [action("book", { startDay: 54, endDay: 54, startHour: 15, endHour: 20 })] });
+    expect(await parseCarRequests(env, "Add a booking for 6 Dec 3-8pm")).toEqual([
+      { type: "book", range: { startsAt: sg("2026-12-06T15:00"), endsAt: sg("2026-12-06T20:00") } },
+    ]);
+    const systemPrompt = (ai.run.mock.calls[0] as any[])[1].messages[0].content as string;
+    expect(systemPrompt).toContain("54:Sun Dec 6");
+    expect(systemPrompt).toContain("119:Tue Feb 9");
+  });
+
+  it("flags a booking past the last bookable day as too far", async () => {
+    const { env } = envWith({ actions: [action("book", { startDay: -1, startHour: 15, endHour: 20 })] });
+    expect(await parseCarRequests(env, "book 6 dec next year")).toEqual([{ type: "book", range: null, tooFar: true }]);
   });
 
   it("drops the range of a booking that has already ended", async () => {

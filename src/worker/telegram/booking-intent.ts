@@ -8,14 +8,15 @@ export interface TimeRange {
 /**
  * One request extracted from a message. A message can carry several, e.g.
  * "Cancel my Wednesday booking. Book tonight instead" → [cancel Wed, book tonight].
- * `range: null` on a booking means the model couldn't pin down the time.
+ * `range: null` on a booking means the model couldn't pin down the time; `tooFar` means the
+ * date was past the last day the bot can book (see BOOKING_HORIZON_DAYS).
  * On a cancel, "soonest" means no day was given; "unclear" means a day was given but unusable.
  * "list" asks for upcoming bookings; "calendar" asks to open the schedule Mini App.
  * "check" asks whether the car is free (range null = couldn't pin down the time);
  * "where" asks where the car is; "location" reports where it was parked.
  */
 export type CarRequest =
-  | { type: "book"; range: TimeRange | null }
+  | { type: "book"; range: TimeRange | null; tooFar?: boolean }
   | { type: "cancel"; when: TimeRange | "soonest" | "unclear" }
   | { type: "list"; whose: "mine" | "everyone" }
   | { type: "calendar" }
@@ -80,7 +81,10 @@ interface CalDay {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function buildCalendar(days = 22): CalDay[] {
+/** How many days ahead (today included) the model can pick from, and so how far ahead people can book. */
+export const BOOKING_HORIZON_DAYS = 120;
+
+function buildCalendar(days = BOOKING_HORIZON_DAYS): CalDay[] {
   const fmt = new Intl.DateTimeFormat("en-SG", {
     timeZone: "Asia/Singapore",
     year: "numeric",
@@ -153,6 +157,8 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
     `The week runs Monday to Sunday (Singapore), so Sunday is the last day of the week. ` +
     `A bare weekday or "this <weekday>" = the first day labelled with that weekday in the list (this week's). ` +
     `"next <weekday>" = the second day labelled with that weekday. ` +
+    `A specific date like "6 dec" = the day with that label in the list. ` +
+    `If the sender names a date after the last numbered day, set startDay = -1. ` +
     `Single day: endDay = startDay. Date range like "21-23 june": startDay = first date, endDay = last date. ` +
     `No time of day mentioned, or "whole day"/"all day": part = "whole". ` +
     `"morning"/"afternoon"/"evening"/"tonight" with no clock time: set part, hours null. ` +
@@ -206,6 +212,10 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
       } else if (action.type === "calendar") {
         requests.push({ type: "calendar" });
       } else if (action.type === "book") {
+        if (action.startDay === -1) {
+          requests.push({ type: "book", range: null, tooFar: true });
+          continue;
+        }
         const range = resolveRange(entries, action);
         const future = range && range.endsAt >= Math.floor(Date.now() / 1000) ? range : null;
         requests.push({ type: "book", range: future });
