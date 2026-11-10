@@ -71,10 +71,22 @@ describe("booking too far ahead", () => {
 
   it("says how far ahead bookings can go", async () => {
     const { env } = setup({ actions: [action("book", { startDate: "2027-06-06", startHour: 15, endHour: 20 })] });
-    await sendText(env, "book 6 dec next year 3-8pm");
+    await sendText(env, "book 6 jun 3-8pm");
     expect(messages()).toHaveLength(1);
     expect(messages()[0].body.text).toContain("up to 120 days in advance");
     expect(bookingIds()).toEqual([]);
+  });
+
+  it("offers 6 Dec for 'Add a booking for 6 Dec 3-8pm' even when the model answers 30 Nov, and books it", async () => {
+    const { env } = setup({ actions: [action("book", { startDate: "2026-11-30", endDate: "2026-11-30", startHour: 15, endHour: 20 })] });
+    await sendText(env, "Add a booking for 6 Dec 3-8pm");
+    const prompt = messages()[0];
+    expect(prompt.body.text).toContain("Book the car?");
+    expect(buttons(prompt)).toEqual([`book:${sg("2026-12-06T15:00")}:${sg("2026-12-06T20:00")}`, "book_cancel"]);
+    await press(env, buttons(prompt)[0]);
+    expect(db.prepare("SELECT user_id, starts_at, ends_at FROM bookings").all()).toEqual([
+      { user_id: FATIM.id, starts_at: sg("2026-12-06T15:00"), ends_at: sg("2026-12-06T20:00") },
+    ]);
   });
 });
 

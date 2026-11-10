@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseCarRequests } from "@/worker/telegram/booking-intent";
+import { mentionedDates, parseCarRequests } from "@/worker/telegram/booking-intent";
 import { action, day, fakeAI, makeEnv, sg } from "./helpers";
 
 // Tuesday 13 Oct 2026, 10:00 in Singapore. day(0) = "2026-10-13", day(1) = "2026-10-14", ...
@@ -182,6 +182,85 @@ describe("parseCarRequests", () => {
     expect(systemPrompt).toContain("Today is Wed 2026-10-14");
     expect(requests).toEqual([
       { type: "book", range: { startsAt: sg("2026-10-14T18:00"), endsAt: sg("2026-10-14T23:00") } },
+    ]);
+  });
+});
+
+describe("mentionedDates", () => {
+  it.each([
+    ["Add a booking for 6 Dec 3-8pm", [["12-06"]]],
+    ["book dec 6 3pm to 8pm", [["12-06"]]],
+    ["book 6 dec 3 to 8pm", [["12-06"]]],
+    ["book Dec 6th at 3:30pm", [["12-06"]]],
+    ["book the 6th of december", [["12-06"]]],
+    ["reserve 21-23 june", [["06-21", "06-23"]]],
+    ["reserve june 21 to 23", [["06-21", "06-23"]]],
+    ["tempah 6 disember", [["12-06"]]],
+    ["move my booking from 6 dec to 8 dec", [["12-06"], ["12-08"]]],
+    ["book saturday 2pm to 6pm", []],
+    ["book tonight 7pm", []],
+    ["need the car for 2 days", []],
+    ["book 3 to 8pm", []],
+  ])("%s", (text, expected) => {
+    expect(mentionedDates(text)).toEqual(expected);
+  });
+});
+
+describe("parseCarRequests trusts a spelled-out date over the model", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW * 1000);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("fixes 'Add a booking for 6 Dec 3-8pm' when the model answers 30 Nov", async () => {
+    const { env } = envWith({ actions: [action("book", { startDate: "2026-11-30", endDate: "2026-11-30", startHour: 15, endHour: 20 })] });
+    expect(await parseCarRequests(env, "Add a booking for 6 Dec 3-8pm")).toEqual([
+      { type: "book", range: { startsAt: sg("2026-12-06T15:00"), endsAt: sg("2026-12-06T20:00") } },
+    ]);
+  });
+
+  it("fixes a range like '21-23 june'", async () => {
+    vi.setSystemTime(sg("2027-05-01T10:00") * 1000);
+    const { env } = envWith({ actions: [action("book", { startDate: "2027-06-20", part: "whole" })] });
+    expect(await parseCarRequests(env, "reserve 21-23 june")).toEqual([
+      { type: "book", range: { startsAt: sg("2027-06-21T00:00"), endsAt: sg("2027-06-23T23:59:59") } },
+    ]);
+  });
+
+  it("tolerates a date written with a time or without a year", async () => {
+    const { env } = envWith({
+      actions: [
+        action("book", { startDate: "2026-12-06T15:00", startHour: 15, endHour: 20 }),
+        action("book", { startDate: "12-07", startHour: 15, endHour: 20 }),
+      ],
+    });
+    expect(await parseCarRequests(env, "book 6 dec 3-8pm and 7 dec 3-8pm")).toEqual([
+      { type: "book", range: { startsAt: sg("2026-12-06T15:00"), endsAt: sg("2026-12-06T20:00") } },
+      { type: "book", range: { startsAt: sg("2026-12-07T15:00"), endsAt: sg("2026-12-07T20:00") } },
+    ]);
+  });
+
+  it("keeps the model's year when the day matches ('6 dec next year' is too far)", async () => {
+    const { env } = envWith({ actions: [action("book", { startDate: "2027-12-06", startHour: 15, endHour: 20 })] });
+    expect(await parseCarRequests(env, "book 6 dec next year 3-8pm")).toEqual([{ type: "book", range: null, tooFar: true }]);
+  });
+
+  it("leaves several dates to the model ('move from 6 dec to 8 dec')", async () => {
+    const { env } = envWith({
+      actions: [action("cancel", { startDate: "2026-12-06", part: "whole" }), action("book", { startDate: "2026-12-08", part: "whole" })],
+    });
+    const requests = await parseCarRequests(env, "move my booking from 6 dec to 8 dec");
+    expect(requests).toEqual([
+      { type: "cancel", when: { startsAt: sg("2026-12-06T00:00"), endsAt: sg("2026-12-06T23:59:59") } },
+      { type: "book", range: { startsAt: sg("2026-12-08T00:00"), endsAt: sg("2026-12-08T23:59:59") } },
+    ]);
+  });
+
+  it("doesn't touch relative days ('book saturday 2pm to 6pm')", async () => {
+    const { env } = envWith({ actions: [action("book", { startDate: day(4), startHour: 14, endHour: 18 })] });
+    expect(await parseCarRequests(env, "book saturday 2pm to 6pm")).toEqual([
+      { type: "book", range: { startsAt: sg("2026-10-17T14:00"), endsAt: sg("2026-10-17T18:00") } },
     ]);
   });
 });

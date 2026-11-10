@@ -197,9 +197,10 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
     if (parsed.error || !Array.isArray(parsed.actions)) return null;
 
     const requests: CarRequest[] = [];
+    const mentioned = mentionedDates(text);
     for (const raw of parsed.actions as unknown[]) {
       if (!raw || typeof raw !== "object") continue;
-      const action = raw as Record<string, unknown>;
+      const action = correctDates(entries[0], raw as Record<string, unknown>, mentioned);
       if (action.type === "cancel") {
         if (action.startDate === null || action.startDate === undefined) {
           requests.push({ type: "cancel", when: "soonest" });
@@ -240,6 +241,72 @@ interface Day {
   d: number;
 }
 
+// English and Malay month names, by month number.
+const MONTH_WORDS: [RegExp, number][] = [
+  [/^(jan|january|januari)$/, 1],
+  [/^(feb|february|februari)$/, 2],
+  [/^(mar|march|mac)$/, 3],
+  [/^(apr|april)$/, 4],
+  [/^(may|mei)$/, 5],
+  [/^(jun|june)$/, 6],
+  [/^(jul|july|julai)$/, 7],
+  [/^(aug|august|ogos)$/, 8],
+  [/^(sep|sept|september)$/, 9],
+  [/^(oct|october|oktober)$/, 10],
+  [/^(nov|november)$/, 11],
+  [/^(dec|december|disember)$/, 12],
+];
+const MONTH = "([a-z]{3,9})";
+// A day of the month, but not the hour in "3pm", "3-8pm", "3 to 8pm" or "3:30".
+const DAY = "(\\d{1,2})(?:st|nd|rd|th)?(?!\\s*(?:am|pm|[:.]\\d)|\\s*(?:-|to)\\s*\\d{1,2}\\s*(?:am|pm|[:.]\\d))";
+const SPAN = "(?:\\s*(?:-|to|until|till)\\s*";
+// "6 dec", "21-23 june", "6th of december" / "dec 6", "december 21-23".
+const DAY_MONTH_RE = new RegExp(`\\b${DAY}${SPAN}${DAY})?\\s*(?:of\\s+)?${MONTH}\\b`, "gi");
+const MONTH_DAY_RE = new RegExp(`\\b${MONTH}\\s+${DAY}${SPAN}${DAY})?\\b`, "gi");
+
+function monthNumber(word: string): number | null {
+  const w = word.toLowerCase();
+  for (const [re, n] of MONTH_WORDS) if (re.test(w)) return n;
+  return null;
+}
+
+/**
+ * Dates written out with a month name in the message ("6 Dec", "21-23 june", "Dec 6th"), in the
+ * order written. Each mention is a list of "MM-DD": one for a single date, two for a range.
+ */
+export function mentionedDates(text: string): string[][] {
+  const found: { from: number; to: number; dates: string[] }[] = [];
+  const add = (match: RegExpMatchArray, month: string, ...days: (string | undefined)[]) => {
+    const m = monthNumber(month);
+    const from = match.index ?? 0;
+    const to = from + match[0].length;
+    if (m === null || found.some((f) => from < f.to && to > f.from)) return; // not a month, or overlaps one found
+    const dates = days.filter((d): d is string => d !== undefined).map((d) => `${pad2(m)}-${pad2(Number(d))}`);
+    found.push({ from, to, dates });
+  };
+  for (const match of text.matchAll(DAY_MONTH_RE)) add(match, match[3], match[1], match[2]);
+  for (const match of text.matchAll(MONTH_DAY_RE)) add(match, match[1], match[2], match[3]);
+  return found.sort((a, b) => a.from - b.from).map((f) => f.dates);
+}
+
+/**
+ * When the message spells out exactly one date or range ("6 Dec", "21-23 june") and the model
+ * gave a different day, use the spelled-out one: the model sometimes picks the wrong day.
+ * With several dates ("move it from 6 dec to 8 dec") it's left to the model.
+ */
+function correctDates(today: Day, action: Record<string, unknown>, mentioned: string[][]): Record<string, unknown> {
+  if (mentioned.length !== 1 || action.startDate === null || action.startDate === undefined) return action;
+  const [first, last = first] = mentioned[0];
+  if (parseDate(today, first) === null || parseDate(today, last) === null) return action; // e.g. "31 nov"
+  const monthDay = (v: unknown) => {
+    const p = parseDate(today, v);
+    return p === null ? null : `${pad2(p.m)}-${pad2(p.d)}`;
+  };
+  const end = action.endDate === null || action.endDate === undefined ? action.startDate : action.endDate;
+  if (monthDay(action.startDate) === first && monthDay(end) === last) return action;
+  return { ...action, startDate: first, endDate: last };
+}
+
 /**
  * A "YYYY-MM-DD" date and how many days it is from `today`, or null if it isn't a real date. A date
  * more than a week in the past is taken as next year's ("5 jan" said in November), in case the
@@ -247,11 +314,13 @@ interface Day {
  */
 function parseDate(today: Day, value: unknown): (Day & { offset: number }) | null {
   if (typeof value !== "string") return null;
-  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value.trim());
-  if (!match) return null;
-  let y = Number(match[1]);
-  const m = Number(match[2]);
-  const d = Number(match[3]);
+  // "2026-12-06", also tolerating a trailing time ("2026-12-06T15:00") or a missing year ("12-06").
+  const full = /^(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/.exec(value.trim());
+  const short = full ? null : /^(\d{1,2})-(\d{1,2})$/.exec(value.trim());
+  if (!full && !short) return null;
+  let y = full ? Number(full[1]) : today.y;
+  const m = Number(full ? full[2] : short![1]);
+  const d = Number(full ? full[3] : short![2]);
   const base = Date.UTC(today.y, today.m - 1, today.d);
   const at = (year: number) => {
     const t = new Date(Date.UTC(year, m - 1, d));
