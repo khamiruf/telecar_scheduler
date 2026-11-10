@@ -220,6 +220,15 @@ describe("parseCarRequests trusts a spelled-out date over the model", () => {
     ]);
   });
 
+  it("fills in the date when the model leaves it out ('book 6 dec', 'cancel 6 dec')", async () => {
+    const { env } = envWith({ actions: [action("book", { startHour: 15, endHour: 20 }), action("cancel", { part: "whole" }), action("where")] });
+    expect(await parseCarRequests(env, "book 6 dec 3-8pm")).toEqual([
+      { type: "book", range: { startsAt: sg("2026-12-06T15:00"), endsAt: sg("2026-12-06T20:00") } },
+      { type: "cancel", when: { startsAt: sg("2026-12-06T00:00"), endsAt: sg("2026-12-06T23:59:59") } },
+      { type: "where" },
+    ]);
+  });
+
   it("fixes a range like '21-23 june'", async () => {
     vi.setSystemTime(sg("2027-05-01T10:00") * 1000);
     const { env } = envWith({ actions: [action("book", { startDate: "2027-06-20", part: "whole" })] });

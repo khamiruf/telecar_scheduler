@@ -292,10 +292,12 @@ export function mentionedDates(text: string): string[][] {
 /**
  * When the message spells out exactly one date or range ("6 Dec", "21-23 june") and the model
  * gave a different day, use the spelled-out one: the model sometimes picks the wrong day.
- * With several dates ("move it from 6 dec to 8 dec") it's left to the model.
+ * Also fills in the date when the model left it out. With several dates ("move it from 6 dec to
+ * 8 dec") it's left to the model.
  */
 function correctDates(today: Day, action: Record<string, unknown>, mentioned: string[][]): Record<string, unknown> {
-  if (mentioned.length !== 1 || action.startDate === null || action.startDate === undefined) return action;
+  // Only these carry a date. One the model left without a date still gets the spelled-out one.
+  if (mentioned.length !== 1 || !["book", "cancel", "check"].includes(action.type as string)) return action;
   const [first, last = first] = mentioned[0];
   if (parseDate(today, first) === null || parseDate(today, last) === null) return action; // e.g. "31 nov"
   const monthDay = (v: unknown) => {
