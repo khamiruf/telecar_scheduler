@@ -87,5 +87,10 @@ export function makeEnv(d1: D1Database, ai: Ai): Env {
 
 /** Builds a model reply action with the defaults the prompt asks for. */
 export function action(type: CarRequest["type"], fields: Record<string, unknown> = {}) {
-  return { type, startDay: null, endDay: null, part: null, startHour: null, endHour: null, ...fields };
+  return { type, startDate: null, endDate: null, part: null, startHour: null, endHour: null, ...fields };
+}
+
+/** The "YYYY-MM-DD" date `n` days after Tue 13 Oct 2026, the day the tests run on. */
+export function day(n: number): string {
+  return new Date(Date.UTC(2026, 9, 13 + n)).toISOString().slice(0, 10);
 }

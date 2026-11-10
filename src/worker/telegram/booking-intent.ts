@@ -73,18 +73,23 @@ function sgUnix(year: number, month: number, day: number, hour: number, minute =
 }
 
 interface CalDay {
-  label: string; // "Thu Jun 12"
+  label: string; // "Thu 2026-06-12"
   y: number;
   m: number;
   d: number;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** How many days ahead (today included) the model can pick from, and so how far ahead people can book. */
+/** How far ahead (in days from today) people can book. */
 export const BOOKING_HORIZON_DAYS = 120;
 
-function buildCalendar(days = BOOKING_HORIZON_DAYS): CalDay[] {
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const isoDate = (y: number, m: number, d: number) => `${y}-${pad2(m)}-${pad2(d)}`;
+
+/**
+ * The next two weeks, so the model can turn "saturday" / "next friday" into a date by copying it
+ * from the list. Specific dates ("6 dec") it writes out itself; nothing relies on it counting.
+ */
+function buildCalendar(days = 15): CalDay[] {
   const fmt = new Intl.DateTimeFormat("en-SG", {
     timeZone: "Asia/Singapore",
     year: "numeric",
@@ -101,7 +106,7 @@ function buildCalendar(days = BOOKING_HORIZON_DAYS): CalDay[] {
     const y = Number(parts.year);
     const m = Number(parts.month);
     const d = Number(parts.day);
-    entries.push({ label: `${parts.weekday} ${MONTHS[m - 1]} ${d}`, y, m, d });
+    entries.push({ label: `${parts.weekday} ${isoDate(y, m, d)}`, y, m, d });
   }
   return entries;
 }
@@ -121,45 +126,45 @@ function endOfPartHour(startHour: number): [number, number] {
   return [23, 59];
 }
 
-// The model only picks day indexes and a part-of-day / clock hours; all
-// timestamps are computed here. Small models reliably select indexes but
-// hallucinate digits when asked to emit unix timestamps directly.
+// The model only writes calendar dates (YYYY-MM-DD) and a part-of-day / clock hours; all
+// timestamps are computed here. Small models hallucinate digits when asked to emit unix
+// timestamps, and miscount when asked to pick a position in a long list of days.
 export async function parseCarRequests(env: Env, text: string): Promise<CarRequest[] | null> {
   const entries = buildCalendar();
-  const dayList = entries.map((e, i) => `${i}:${e.label}`).join(" ");
+  const dayList = entries.map((e) => e.label).join(", ");
 
   const systemPrompt =
     `You read messages sent to a family's shared-car Telegram bot and extract what the sender wants. ` +
     `Today is ${entries[0].label} and the time is ${sgClock()} (Asia/Singapore). ` +
-    `Numbered days: ${dayList} ` +
+    `The next two weeks: ${dayList}. ` +
     `Reply with ONLY raw JSON, no markdown, no explanation: ` +
-    `{"actions":[{"type":<"book"|"cancel"|"list"|"calendar"|"check"|"where"|"location"|"help"|"thanks">,"whose":<"mine"|"everyone"|null>,"startDay":<index or null>,"endDay":<index or null>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>}, ...]} ` +
+    `{"actions":[{"type":<"book"|"cancel"|"list"|"calendar"|"check"|"where"|"location"|"help"|"thanks">,"whose":<"mine"|"everyone"|null>,"startDate":<"YYYY-MM-DD" or null>,"endDate":<"YYYY-MM-DD" or null>,"part":<"whole"|"morning"|"afternoon"|"evening"|null>,"startHour":<0-23 or null>,"endHour":<0-23 or null>}, ...]} ` +
     `Rules: ` +
     `One action per request, in the order mentioned. A message can hold several, e.g. ` +
     `"cancel wednesday, book tonight instead" or "move my booking from friday to saturday" = a cancel then a book. ` +
-    `"cancel"/"unbook"/"delete"/"remove" = type "cancel". For a cancel with no day mentioned, startDay = null. ` +
+    `"cancel"/"unbook"/"delete"/"remove" = type "cancel". For a cancel with no day mentioned, startDate = null. ` +
     `Asking to see or find bookings ("my upcoming bookings", "what have I booked", "who has the car this week") = type "list", ` +
-    `with whose "mine" for the sender's own bookings and "everyone" for all bookings; day fields null. ` +
+    `with whose "mine" for the sender's own bookings and "everyone" for all bookings; date fields null. ` +
     `Asking to open or show the calendar, schedule, app or menu = type "calendar", other fields null. ` +
     `"schedule" as a verb ("schedule the car for friday") is a booking, not "calendar". ` +
     `Asking whether the car is free or if anyone is using it at some time ("is the car free tomorrow evening?", ` +
     `"anyone using the car tonight?", "when is the car free on saturday?") = type "check" with the day/time fields; ` +
-    `if no day is given, startDay 0. "can I take the car later?" is a check, not a booking. ` +
+    `if no day is given, startDate null. "can I take the car later?" is a check, not a booking. ` +
     `Asking where the car is now, which level it is on, or who has it right now = type "where", other fields null. ` +
     `Saying where the car was parked ("parked at B2", "car is on level 4") = type "location", other fields null. ` +
     `Greetings, "help", or "what can you do" = type "help". "thanks", "ok", "noted" and similar = type "thanks". ` +
     `Messages may be in English, Singlish or Malay: "tmr"/"tmrw"/"esok" = tomorrow, "tonite"/"malam ni" = tonight, ` +
     `"pagi" = morning, "petang" = afternoon, "tempah" = book, "batal" = cancel, "kereta" = car. ` +
-    `"now"/"right now" = startDay 0 and startHour = the current time, rounded down to the half hour. ` +
+    `"now"/"right now" = today's date and startHour = the current time, rounded down to the half hour. ` +
     `A duration like "3pm for 2 hours" = startHour 15, endHour 17. ` +
     `"this weekend" = this week's Saturday to Sunday; "next weekend" = the following Saturday to Sunday. ` +
-    `"today" = startDay 0. "tomorrow" = startDay 1. ` +
+    `"today" = ${isoDate(entries[0].y, entries[0].m, entries[0].d)}. "tomorrow" = ${isoDate(entries[1].y, entries[1].m, entries[1].d)}. ` +
     `The week runs Monday to Sunday (Singapore), so Sunday is the last day of the week. ` +
     `A bare weekday or "this <weekday>" = the first day labelled with that weekday in the list (this week's). ` +
     `"next <weekday>" = the second day labelled with that weekday. ` +
-    `A specific date like "6 dec" = the day with that label in the list. ` +
-    `If the sender names a date after the last numbered day, set startDay = -1. ` +
-    `Single day: endDay = startDay. Date range like "21-23 june": startDay = first date, endDay = last date. ` +
+    `A specific date like "6 dec" or "21 june" = write that date out, in the current year unless it has already passed, ` +
+    `in which case next year; it does not need to be in the list. ` +
+    `Single day: endDate = startDate. Date range like "21-23 june": startDate = first date, endDate = last date. ` +
     `No time of day mentioned, or "whole day"/"all day": part = "whole". ` +
     `"morning"/"afternoon"/"evening"/"tonight" with no clock time: set part, hours null. ` +
     `Clock times like "2pm to 6pm": startHour 14, endHour 18, part null. Half hours allowed, e.g. 14.5 for 2:30pm. ` +
@@ -196,14 +201,15 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
       if (!raw || typeof raw !== "object") continue;
       const action = raw as Record<string, unknown>;
       if (action.type === "cancel") {
-        if (action.startDay === null || action.startDay === undefined) {
+        if (action.startDate === null || action.startDate === undefined) {
           requests.push({ type: "cancel", when: "soonest" });
         } else {
           requests.push({ type: "cancel", when: resolveRange(entries, action) ?? "unclear" });
         }
       } else if (action.type === "check") {
         // No day means today; the handler only looks from now onwards.
-        const withDay = action.startDay === null || action.startDay === undefined ? { ...action, startDay: 0 } : action;
+        const today = isoDate(entries[0].y, entries[0].m, entries[0].d);
+        const withDay = action.startDate === null || action.startDate === undefined ? { ...action, startDate: today } : action;
         requests.push({ type: "check", range: resolveRange(entries, withDay) });
       } else if (action.type === "where" || action.type === "location" || action.type === "help" || action.type === "thanks") {
         requests.push({ type: action.type });
@@ -212,7 +218,8 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
       } else if (action.type === "calendar") {
         requests.push({ type: "calendar" });
       } else if (action.type === "book") {
-        if (action.startDay === -1) {
+        const start = parseDate(entries[0], action.startDate);
+        if (start !== null && start.offset >= BOOKING_HORIZON_DAYS) {
           requests.push({ type: "book", range: null, tooFar: true });
           continue;
         }
@@ -227,14 +234,46 @@ export async function parseCarRequests(env: Env, text: string): Promise<CarReque
   }
 }
 
+interface Day {
+  y: number;
+  m: number;
+  d: number;
+}
+
+/**
+ * A "YYYY-MM-DD" date and how many days it is from `today`, or null if it isn't a real date. A date
+ * more than a week in the past is taken as next year's ("5 jan" said in November), in case the
+ * model got the year wrong.
+ */
+function parseDate(today: Day, value: unknown): (Day & { offset: number }) | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value.trim());
+  if (!match) return null;
+  let y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  const base = Date.UTC(today.y, today.m - 1, today.d);
+  const at = (year: number) => {
+    const t = new Date(Date.UTC(year, m - 1, d));
+    // Reject dates like 31 Nov that Date would roll over into December.
+    return t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? Math.round((t.getTime() - base) / 86_400_000) : null;
+  };
+  let offset = at(y);
+  if (offset === null) return null;
+  if (offset < -7) {
+    const next = at(y + 1);
+    if (next === null) return null;
+    y += 1;
+    offset = next;
+  }
+  return { y, m, d, offset };
+}
+
 function resolveRange(entries: CalDay[], action: Record<string, unknown>): TimeRange | null {
-  const idx = (v: unknown): number | null =>
-    typeof v === "number" && Number.isInteger(v) && v >= 0 && v < entries.length ? v : null;
-  const si = idx(action.startDay);
-  if (si === null) return null;
-  const ei = Math.max(si, idx(action.endDay) ?? si);
-  const start = entries[si];
-  const end = entries[ei];
+  const start = parseDate(entries[0], action.startDate);
+  if (start === null) return null;
+  const parsedEnd = parseDate(entries[0], action.endDate);
+  const end = parsedEnd !== null && parsedEnd.offset >= start.offset ? parsedEnd : start;
 
   const hour = (v: unknown): number | null =>
     typeof v === "number" && v >= 0 && v < 24 ? v : null;

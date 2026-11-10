@@ -3,10 +3,10 @@ import type { DatabaseSync } from "node:sqlite";
 import { handleUpdate } from "@/worker/telegram/webhook";
 import { cancelBooking } from "@/worker/core/bookings";
 import type { Env } from "@/worker/env";
-import { action, captureTelegram, fakeAI, fakeD1, makeEnv, sg, whisper, type SentCall } from "./helpers";
+import { action, day, captureTelegram, fakeAI, fakeD1, makeEnv, sg, whisper, type SentCall } from "./helpers";
 import { notifyReminder } from "@/worker/telegram/notify";
 
-// Tuesday 13 Oct 2026, 10:00 in Singapore. Day index 0 = Tue 13, 1 = Wed 14, ...
+// Tuesday 13 Oct 2026, 10:00 in Singapore. day(0) = "2026-10-13", day(1) = "2026-10-14", ...
 const NOW = sg("2026-10-13T10:00");
 const FATIM = { id: 111, first_name: "Fatim" };
 const SIBLING = { id: 222, first_name: "Sam" };
@@ -70,7 +70,7 @@ describe("booking too far ahead", () => {
   });
 
   it("says how far ahead bookings can go", async () => {
-    const { env } = setup({ actions: [action("book", { startDay: -1, startHour: 15, endHour: 20 })] });
+    const { env } = setup({ actions: [action("book", { startDate: "2027-06-06", startHour: 15, endHour: 20 })] });
     await sendText(env, "book 6 dec next year 3-8pm");
     expect(messages()).toHaveLength(1);
     expect(messages()[0].body.text).toContain("up to 120 days in advance");
@@ -96,8 +96,8 @@ describe("cancelling bookings by text", () => {
   it("handles both intents in 'Cancel my booking for Wednesday. Book for tonight instead'", async () => {
     const { env } = setup({
       actions: [
-        action("cancel", { startDay: 1, endDay: 1, part: "whole" }),
-        action("book", { startDay: 0, endDay: 0, part: "evening" }),
+        action("cancel", { startDate: day(1), endDate: day(1), part: "whole" }),
+        action("book", { startDate: day(0), endDate: day(0), part: "evening" }),
       ],
     });
     const wed = addBooking(FATIM.id, "2026-10-14T00:00", "2026-10-14T23:59:59");
@@ -134,7 +134,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("offers the user's bookings when they have none on the named day", async () => {
-    const { env } = setup({ actions: [action("cancel", { startDay: 2, endDay: 2, part: "whole" })] }); // Thu
+    const { env } = setup({ actions: [action("cancel", { startDate: day(2), endDate: day(2), part: "whole" })] }); // Thu
     const wed = addBooking(FATIM.id, "2026-10-14T00:00", "2026-10-14T23:59:59");
     const sat = addBooking(FATIM.id, "2026-10-17T14:00", "2026-10-17T18:00");
 
@@ -145,7 +145,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("asks which one when several bookings fall on the named day", async () => {
-    const { env } = setup({ actions: [action("cancel", { startDay: 4, endDay: 4, part: "whole" })] }); // Sat
+    const { env } = setup({ actions: [action("cancel", { startDate: day(4), endDate: day(4), part: "whole" })] }); // Sat
     const morning = addBooking(FATIM.id, "2026-10-17T08:00", "2026-10-17T10:00");
     const evening = addBooking(FATIM.id, "2026-10-17T19:00", "2026-10-17T21:00");
 
@@ -298,7 +298,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("'is the car free tomorrow evening?' says free and offers a Book it button", async () => {
-    const { env } = setup({ actions: [action("check", { startDay: 1, endDay: 1, part: "evening" })] });
+    const { env } = setup({ actions: [action("check", { startDate: day(1), endDate: day(1), part: "evening" })] });
 
     await sendText(env, "is the car free tomorrow evening?");
 
@@ -307,7 +307,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("when busy, says who has it and offers the free gaps", async () => {
-    const { env } = setup({ actions: [action("check", { startDay: 1, endDay: 1, part: "evening" })] });
+    const { env } = setup({ actions: [action("check", { startDate: day(1), endDate: day(1), part: "evening" })] });
     addBooking(SIBLING.id, "2026-10-14T19:00", "2026-10-14T20:30");
 
     await sendText(env, "anyone using the car tomorrow night?");
@@ -322,13 +322,13 @@ describe("cancelling bookings by text", () => {
   });
 
   it("a check for today only looks from now onwards", async () => {
-    const { env } = setup({ actions: [action("check", { startDay: 0, part: "whole" })] });
+    const { env } = setup({ actions: [action("check", { startDate: day(0), part: "whole" })] });
     await sendText(env, "is the car free today?");
     expect(messages()[0].body.text).toBe("✅ The car is free Tue 13 Oct, 10:00–23:59.");
   });
 
   it("a weekend check shows both days", async () => {
-    const { env } = setup({ actions: [action("check", { startDay: 4, endDay: 5, part: "whole" })] });
+    const { env } = setup({ actions: [action("check", { startDate: day(4), endDate: day(5), part: "whole" })] });
     await sendText(env, "is the car free this weekend?");
     expect(messages()[0].body.text).toBe("✅ The car is free Sat 17 Oct, 00:00–Sun 18 Oct, 23:59.");
   });
@@ -342,7 +342,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("a booking that clashes with someone else says who has it instead of offering Confirm", async () => {
-    const { env } = setup({ actions: [action("book", { startDay: 1, endDay: 1, part: "evening" })] });
+    const { env } = setup({ actions: [action("book", { startDate: day(1), endDate: day(1), part: "evening" })] });
     addBooking(SIBLING.id, "2026-10-14T18:00", "2026-10-14T20:00");
 
     await sendText(env, "book tomorrow night");
@@ -352,7 +352,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("a booking for a part of today that has started begins now, ignoring bookings that already ended", async () => {
-    const { env } = setup({ actions: [action("book", { startDay: 0, endDay: 0, part: "morning" })] });
+    const { env } = setup({ actions: [action("book", { startDate: day(0), endDate: day(0), part: "morning" })] });
     addBooking(SIBLING.id, "2026-10-13T07:00", "2026-10-13T09:00"); // over by 10:00
 
     await sendText(env, "book this morning");
@@ -363,7 +363,7 @@ describe("cancelling bookings by text", () => {
 
   it("an overlap with the sender's own booking still offers Confirm, with a note", async () => {
     const { env } = setup({
-      actions: [action("cancel", { startDay: 0, part: "evening" }), action("book", { startDay: 0, startHour: 20 })],
+      actions: [action("cancel", { startDate: day(0), part: "evening" }), action("book", { startDate: day(0), startHour: 20 })],
     });
     const tonight = addBooking(FATIM.id, "2026-10-13T18:00", "2026-10-13T23:00");
 
@@ -376,7 +376,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("messages without keywords now reach the model", async () => {
-    const { env, ai } = setup({ actions: [action("check", { startDay: 0, part: "evening" })] });
+    const { env, ai } = setup({ actions: [action("check", { startDate: day(0), part: "evening" })] });
     await sendText(env, "can I take the car later");
     expect(ai.run).toHaveBeenCalledTimes(1);
     expect(messages()[0].body.text).toContain("free");
@@ -406,7 +406,7 @@ describe("cancelling bookings by text", () => {
   });
 
   it("a voice note asking to book is read like text", async () => {
-    const { env } = setup(whisper("book tomorrow at 2pm"), { actions: [action("book", { startDay: 1, startHour: 14 })] });
+    const { env } = setup(whisper("book tomorrow at 2pm"), { actions: [action("book", { startDate: day(1), startHour: 14 })] });
     await handleUpdate(
       env,
       { update_id: ++updateId, message: { message_id: 1, from: FATIM, chat: { id: FATIM.id, type: "private" }, voice: { file_id: "f", duration: 3 } } },
