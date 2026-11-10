@@ -5,7 +5,7 @@ import { addUser, resolveAuthorizedUser } from "../core/users";
 import { answerCallbackQuery, downloadFile, escapeHtml, sendMessage, type TgCallbackQuery, type TgMessage, type TgUpdate } from "./api";
 import { formatRange, notifyBooked, notifyCancelled, notifyLocation, statusLine } from "./notify";
 import { parseLevel } from "./parse";
-import { looksLikeBooking, looksLikeCancel, looksLikeView, mightBeRequest, parseCarRequests, type TimeRange } from "./booking-intent";
+import { BOOKING_HORIZON_DAYS, looksLikeBooking, looksLikeCancel, looksLikeView, mightBeRequest, parseCarRequests, type TimeRange } from "./booking-intent";
 import type { Booking } from "@/shared/types";
 import type { User } from "../core/users";
 
@@ -260,7 +260,7 @@ async function handleRequests(
         await sendMessage(env, message.chat.id, "\u{1F44D}");
         break;
       case "book":
-        await handleBookingIntent(env, message, userId, request.range);
+        await handleBookingIntent(env, message, userId, request.range, request.tooFar);
         break;
     }
   }
@@ -434,7 +434,16 @@ async function handleBookingIntent(
   message: TgMessage,
   userId: number,
   intent: TimeRange | null,
+  tooFar = false,
 ): Promise<void> {
+  if (!intent && tooFar) {
+    await sendMessage(
+      env,
+      message.chat.id,
+      `\u{1F4C6} That's too far ahead — I can only book up to ${BOOKING_HORIZON_DAYS} days in advance.`,
+    );
+    return;
+  }
   if (!intent) {
     await sendMessage(
       env,
@@ -443,7 +452,8 @@ async function handleBookingIntent(
         `<b>Whole days</b>\n` +
         `· "book tomorrow"\n` +
         `· "book this saturday whole day"\n` +
-        `· "reserve 21-23 june"\n\n` +
+        `· "reserve 21-23 june"\n` +
+        `· "book 6 dec 3pm to 8pm"\n\n` +
         `<b>Time of day</b>\n` +
         `· "book tomorrow morning" (06:00–12:00)\n` +
         `· "book this friday afternoon" (12:00–18:00)\n` +
@@ -452,7 +462,8 @@ async function handleBookingIntent(
         `· "book saturday 2pm to 6pm"\n` +
         `· "book tonight 7pm" (until 23:00)\n\n` +
         `<b>Relative days</b>\n` +
-        `· today / tomorrow / this &lt;weekday&gt; / next &lt;weekday&gt;`,
+        `· today / tomorrow / this &lt;weekday&gt; / next &lt;weekday&gt;\n\n` +
+        `Bookings can be up to ${BOOKING_HORIZON_DAYS} days ahead.`,
     );
     return;
   }
